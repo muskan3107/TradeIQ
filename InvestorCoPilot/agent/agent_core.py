@@ -110,9 +110,9 @@ class InvestorAgent:
             return [
                 {
                     "name": "document_processor",
-                    "fn": self.document_processor.process,
-                    # The raw source (file path or text) lives in task_data['source']
-                    "input_key": "source",
+                    "fn": self.document_processor.execute,
+                    # Pass full context so execute() can read context['task_data']['pdf_path']
+                    "input_key": None,
                     "output_key": "document",
                 },
                 {
@@ -130,7 +130,7 @@ class InvestorAgent:
                 },
                 {
                     "name": "portfolio_manager",
-                    "fn": lambda _ctx: self.portfolio_manager.get_summary(),
+                    "fn": self.portfolio_manager.execute,
                     "input_key": None,
                     "output_key": "portfolio",
                 },
@@ -160,7 +160,7 @@ class InvestorAgent:
                 },
                 {
                     "name": "portfolio_manager",
-                    "fn": lambda _ctx: self.portfolio_manager.get_summary(),
+                    "fn": self.portfolio_manager.execute,
                     "input_key": None,
                     "output_key": "portfolio",
                 },
@@ -188,7 +188,7 @@ class InvestorAgent:
                 },
                 {
                     "name": "portfolio_manager",
-                    "fn": lambda _ctx: self.portfolio_manager.get_summary(),
+                    "fn": self.portfolio_manager.execute,
                     "input_key": None,
                     "output_key": "portfolio",
                 },
@@ -270,14 +270,18 @@ class InvestorAgent:
         # Portfolio impact: simple summary of current positions vs. sentiment
         portfolio_impact = self._derive_portfolio_impact(context)
 
-        # Confidence value — already computed by confidence_engine step (float 0-1)
-        raw_confidence = context.get("confidence", 0.0)
-        confidence_payload = {
-            "score": raw_confidence,
-            "level": self._confidence_label(raw_confidence),
-            "steps_succeeded": len(succeeded),
-            "steps_failed": len(failed_steps),
-        }
+        # Confidence value — already computed by confidence_engine step (dict)
+        raw_confidence = context.get("confidence") or {}
+        if isinstance(raw_confidence, dict):
+            confidence_payload = raw_confidence
+        else:
+            # backward-compat: was previously a raw float
+            score = float(raw_confidence) if raw_confidence else 0.0
+            confidence_payload = {
+                "score": score,
+                "percentage": int(score * 100),
+                "label": self._confidence_label(score),
+            }
 
         result: dict[str, Any] = {
             "timestamp":        timestamp,
@@ -299,7 +303,9 @@ class InvestorAgent:
             result["question_class"] = context["question_class"]
 
         if context.get("ai_summary") is not None:
-            result["summary"] = context["ai_summary"].get("summary", "")
+            ai = context["ai_summary"]
+            if isinstance(ai, dict) and ai.get("success"):
+                result["summary"] = ai.get("text", "")
 
         if failed_steps:
             result["warnings"] = [f"{s['step']}: {s['error']}" for s in failed_steps]
@@ -323,53 +329,47 @@ class InvestorAgent:
     # specific method signature.
 
     def _extract_metrics_from_context(self, context: dict) -> dict:
-        """Pulls text from the document_processor output and runs MetricExtractor."""
-        doc  = context.get("document") or {}
-        text = doc.get("text", "") if isinstance(doc, dict) else str(doc)
-        if not text:
-            raise ValueError("No document text available for metric extraction.")
-        return self.metric_extractor.extract(text)
+        """Passes context to MetricExtractor.execute() using the canonical key path."""
+        doc = context.get("document") or {}
+        if isinstance(doc, dict) and not doc.get("success", True):
+            raise ValueError(f"Document processing failed: {doc.get('error', 'unknown error')}")
+        # Build the sub-context MetricExtractor expects
+        extractor_ctx = {"document_processor": doc, "document": doc}
+        return self.metric_extractor.execute(extractor_ctx)
 
     def _analyze_sentiment_from_context(self, context: dict) -> dict:
-        """Pulls text from the document_processor output and runs SentimentAnalyzer."""
-        doc  = context.get("document") or {}
-        text = doc.get("text", "") if isinstance(doc, dict) else str(doc)
-        if not text:
-            raise ValueError("No document text available for sentiment analysis.")
-        return self.sentiment_analyzer.analyze(text)
+        """Passes context to SentimentAnalyzer.execute() using the canonical key path."""
+        doc = context.get("document") or {}
+        if isinstance(doc, dict) and not doc.get("success", True):
+            raise ValueError(f"Document processing failed: {doc.get('error', 'unknown error')}")
+        analyzer_ctx = {"document_processor": doc, "document": doc}
+        return self.sentiment_analyzer.execute(analyzer_ctx)
 
-    def _score_confidence_from_context(self, context: dict) -> float:
+    def _score_confidence_from_context(self, context: dict) -> dict:
         """
-        Builds a results list from all non-private context keys and scores them.
+        Passes the shared context to ConfidenceEngine.execute() so it can
+        read metrics_found, total_signals, owns_stock, and pages_extracted
+        from the outputs of prior tool steps.
         """
-        results = [
-            {"result": v}
-            for k, v in context.items()
-            if not k.startswith("_") and v is not None
-        ]
-        return self.confidence_engine.score(results)
+        # Map agent context keys to the keys ConfidenceEngine expects
+        engine_ctx = {
+            "metrics":   context.get("metrics")   or {},
+            "sentiment": context.get("sentiment") or {},
+            "portfolio": context.get("portfolio") or {},
+            "document":  context.get("document")  or {},
+        }
+        return self.confidence_engine.execute(engine_ctx)
 
     def _enhance_from_context(self, context: dict) -> dict:
-        """Generates an AI summary from available document text."""
-        doc  = context.get("document") or {}
-        text = doc.get("text", "") if isinstance(doc, dict) else ""
-
-        # Build a richer prompt by appending extracted metrics and sentiment
-        metrics   = context.get("metrics") or {}
-        sentiment = context.get("sentiment") or {}
-
-        prompt_parts = []
-        if text:
-            prompt_parts.append(f"Document excerpt: {text[:500]}")
-        if metrics:
-            prompt_parts.append(f"Metrics: {metrics}")
-        if sentiment:
-            prompt_parts.append(f"Sentiment: {sentiment}")
-
-        if not prompt_parts:
-            raise ValueError("No content available for AI enhancement.")
-
-        return self.ai_enhancer.enhance("\n".join(prompt_parts))
+        """Passes the full agent context to AIEnhancer.execute()."""
+        # Map agent context keys to the shape AIEnhancer expects
+        enhancer_ctx = {
+            "metrics":   context.get("metrics")   or {},
+            "sentiment": context.get("sentiment") or {},
+            "portfolio": context.get("portfolio") or {},
+            "document":  context.get("document")  or {},
+        }
+        return self.ai_enhancer.execute(enhancer_ctx)
 
     def _classify_question(self, question: str) -> dict:
         """
