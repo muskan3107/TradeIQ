@@ -1,1063 +1,999 @@
 """
-app.py — InvestorCoPilot AI
-Website-style experience: landing page → dashboard navigation.
-All backend logic preserved.
+InvestorCoPilot AI - upgraded Gradio frontend
+Landing-first responsive product UI with AI and language toggles.
 """
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import os
+import sys
+from pathlib import Path
+from html import escape
 
 import gradio as gr
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from agent.agent_core import InvestorAgent
 from tools.portfolio_manager import PortfolioManager
 
+
 agent = InvestorAgent()
-pm    = PortfolioManager()
+pm = PortfolioManager()
 
-MARKET_DATA = [
-    {"index": "NIFTY 50",   "value": "22,147.00", "change": "+0.43%", "up": True},
-    {"index": "SENSEX",     "value": "73,088.33", "change": "+0.38%", "up": True},
-    {"index": "BANK NIFTY", "value": "47,312.50", "change": "-0.12%", "up": False},
-    {"index": "NIFTY IT",   "value": "35,640.20", "change": "+1.21%", "up": True},
-]
-TOP_PICKS = [
-    {"stock": "TCS",      "signal": "BUY",  "conf": 87, "reason": "Strong Q4 earnings beat",     "up": True},
-    {"stock": "RELIANCE", "signal": "HOLD", "conf": 72, "reason": "Stable margins, monitor Jio", "up": True},
-    {"stock": "INFOSYS",  "signal": "BUY",  "conf": 81, "reason": "Deal wins accelerating",      "up": True},
-    {"stock": "HDFCBANK", "signal": "HOLD", "conf": 68, "reason": "NIM pressure, await clarity", "up": False},
-]
-NEWS_ITEMS = [
-    {"tag": "AI Insight", "headline": "TCS Q4 revenue beats estimates by 3.2% — positive momentum"},
-    {"tag": "Alert",      "headline": "RBI holds repo rate; banking sector outlook stable"},
-    {"tag": "AI Insight", "headline": "Infosys raises FY25 guidance — deal pipeline robust"},
-    {"tag": "Market",     "headline": "FII inflows surge ₹4,200 Cr — broad market rally expected"},
-]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CSS
-# ─────────────────────────────────────────────────────────────────────────────
-CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
-@keyframes fadeIn      { from{opacity:0} to{opacity:1} }
-@keyframes slideUp     { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-@keyframes floatY      { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
-@keyframes pulseDot    { 0%,100%{opacity:1} 50%{opacity:.35} }
-@keyframes barFill     { from{width:0} to{width:var(--w)} }
-
-*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
-body { background:#F5F5F5 !important; }
-
-/* ── Container ── */
-.gradio-container {
-    background:#F5F5F5 !important;
-    font-family:'Inter','Segoe UI',sans-serif !important;
-    max-width:1200px !important; width:100% !important;
-    margin:0 auto !important; padding:0 0 48px !important;
-}
-.gradio-container>.main,
-.gradio-container>.wrap { padding:0 !important; box-shadow:none !important; background:transparent !important; }
-
-/* ── Site nav ── */
-#sitenav {
-    position:sticky; top:0; z-index:200;
-    background:#fff; border-bottom:3px solid #E11D2E;
-    padding:0 32px; height:58px;
-    display:flex; align-items:center; justify-content:space-between;
-    box-shadow:0 2px 14px rgba(0,0,0,.08);
-}
-#sitenav-logo { font-size:1.2rem; font-weight:900; color:#E11D2E; letter-spacing:-.02em; cursor:pointer; }
-#sitenav-logo span { color:#1E293B; }
-#sitenav-links { display:flex; align-items:center; gap:6px; }
-.snav-btn {
-    border:none; background:transparent; padding:7px 16px;
-    font-size:.82rem; font-weight:600; color:#475569; cursor:pointer;
-    border-radius:8px; transition:all .15s;
-}
-.snav-btn:hover { background:#F1F5F9; color:#1E293B; }
-.snav-cta {
-    background:#E11D2E; color:#fff !important; border-radius:8px;
-    padding:7px 18px; font-size:.82rem; font-weight:700;
-    border:none; cursor:pointer;
-    box-shadow:0 2px 8px rgba(225,29,46,.28);
-    transition:all .15s;
-}
-.snav-cta:hover { background:#B91C1C; transform:scale(1.03); }
-#sitenav-right { display:flex; align-items:center; gap:10px; }
-#demo-pill {
-    background:#FEF9C3; border:1px solid #FDE68A; border-radius:20px;
-    padding:3px 10px; font-size:.68rem; font-weight:700; color:#92400E;
-}
-#status-pill {
-    display:flex; align-items:center; gap:5px;
-    background:#F0FDF4; border:1px solid #BBF7D0; border-radius:20px;
-    padding:3px 10px; font-size:.7rem; font-weight:600; color:#16A34A;
-}
-#status-pill::before { content:"●"; font-size:.55rem; animation:pulseDot 1.8s infinite; }
-
-/* ── Page wrapper ── */
-.page { display:none; padding:0 32px; animation:fadeIn .35s ease both; }
-.page.active { display:block; }
-
-/* ══════════════════════════════════════════════════════
-   LANDING PAGE
-══════════════════════════════════════════════════════ */
-
-/* Hero */
-#hero {
-    background:linear-gradient(160deg,#fff 0%,#FFF5F5 55%,#FEE2E2 100%);
-    border-radius:0 0 24px 24px;
-    padding:72px 48px 64px;
-    display:grid; grid-template-columns:1fr 1fr; gap:48px; align-items:center;
-    margin:0 -32px 48px; animation:slideUp .5s ease both;
-}
-@media(max-width:768px){ #hero{grid-template-columns:1fr;padding:40px 24px;margin:0 -24px 32px;} }
-
-#hero-eyebrow {
-    font-size:.72rem; font-weight:700; color:#E11D2E;
-    text-transform:uppercase; letter-spacing:.12em; margin-bottom:14px;
-}
-#hero-title {
-    font-size:3rem; font-weight:900; color:#1E293B;
-    line-height:1.1; letter-spacing:-.03em; margin-bottom:16px;
-}
-#hero-title span { color:#E11D2E; }
-#hero-sub {
-    font-size:1.05rem; color:#475569; line-height:1.65; margin-bottom:10px;
-}
-#hero-tagline {
-    font-size:.85rem; color:#94A3B8; font-style:italic; margin-bottom:28px;
-}
-#hero-btns { display:flex; gap:12px; flex-wrap:wrap; }
-
-/* Floating card stack */
-#hero-visual { position:relative; height:260px; }
-.hv-card {
-    position:absolute; background:#fff; border-radius:16px;
-    padding:18px 22px; box-shadow:0 8px 32px rgba(0,0,0,.12); width:230px;
-}
-.hv-card:nth-child(1){ top:0;   left:10px; animation:floatY 4s ease-in-out infinite; }
-.hv-card:nth-child(2){ top:70px; left:80px; animation:floatY 4s ease-in-out infinite .9s; }
-.hv-card:nth-child(3){ top:140px; left:20px; animation:floatY 4s ease-in-out infinite 1.8s; }
-.hv-ticker { font-size:.68rem; font-weight:700; color:#94A3B8; text-transform:uppercase; }
-.hv-val    { font-size:1.25rem; font-weight:800; color:#1E293B; margin:4px 0; }
-
-/* Problem/Solution cards */
-.ps-grid {
-    display:grid; grid-template-columns:repeat(2,1fr); gap:18px;
-    margin-bottom:56px; animation:slideUp .5s ease .1s both;
-}
-@media(max-width:640px){ .ps-grid{grid-template-columns:1fr;} }
-.ps-card {
-    background:#fff; border-radius:16px; padding:24px 26px;
-    box-shadow:0 2px 12px rgba(0,0,0,.07);
-    border-top:4px solid #E11D2E;
-    transition:transform .2s,box-shadow .2s;
-}
-.ps-card:hover { transform:translateY(-4px); box-shadow:0 10px 28px rgba(0,0,0,.12); }
-.ps-icon  { font-size:1.8rem; margin-bottom:10px; }
-.ps-title { font-size:1rem; font-weight:800; color:#1E293B; margin-bottom:6px; }
-.ps-body  { font-size:.83rem; color:#64748B; line-height:1.55; margin-bottom:10px; }
-.ps-highlight {
-    background:#FEF2F2; border-left:3px solid #E11D2E;
-    border-radius:0 8px 8px 0; padding:8px 12px;
-    font-size:.8rem; color:#B91C1C; font-weight:600; line-height:1.45;
-}
-
-/* How it works */
-#how-section { margin-bottom:56px; animation:slideUp .5s ease .15s both; }
-.how-flow {
-    display:flex; align-items:center; gap:0;
-    background:#fff; border-radius:16px; padding:28px 24px;
-    box-shadow:0 2px 12px rgba(0,0,0,.07); flex-wrap:wrap;
-}
-.how-step {
-    flex:1; min-width:120px; text-align:center; padding:12px 8px;
-}
-.how-icon  { font-size:1.6rem; margin-bottom:8px; }
-.how-label { font-size:.78rem; font-weight:700; color:#1E293B; }
-.how-desc  { font-size:.7rem; color:#94A3B8; margin-top:3px; line-height:1.4; }
-.how-arrow {
-    font-size:1.2rem; color:#E11D2E; font-weight:700;
-    padding:0 4px; flex-shrink:0;
-}
-@media(max-width:600px){ .how-arrow{display:none;} .how-step{min-width:80px;} }
-
-/* Features */
-.feat-grid {
-    display:grid; grid-template-columns:repeat(2,1fr); gap:16px;
-    margin-bottom:56px; animation:slideUp .5s ease .2s both;
-}
-@media(max-width:640px){ .feat-grid{grid-template-columns:1fr;} }
-.feat-card {
-    background:#fff; border-radius:14px; padding:22px 24px;
-    box-shadow:0 2px 10px rgba(0,0,0,.07);
-    display:flex; gap:16px; align-items:flex-start;
-    transition:transform .2s,box-shadow .2s;
-}
-.feat-card:hover { transform:translateY(-3px); box-shadow:0 8px 24px rgba(0,0,0,.11); }
-.feat-icon-wrap {
-    width:44px; height:44px; border-radius:12px;
-    background:#FEF2F2; display:flex; align-items:center;
-    justify-content:center; font-size:1.3rem; flex-shrink:0;
-}
-.feat-title { font-size:.92rem; font-weight:800; color:#1E293B; margin-bottom:4px; }
-.feat-desc  { font-size:.78rem; color:#64748B; line-height:1.5; }
-
-/* Landing CTA strip */
-#landing-cta {
-    background:linear-gradient(135deg,#1E293B,#E11D2E);
-    border-radius:16px; padding:40px 36px;
-    text-align:center; margin-bottom:16px;
-    animation:slideUp .5s ease .25s both;
-}
-
-/* Section titles */
-.section-title {
-    font-size:1.5rem; font-weight:800; color:#1E293B;
-    letter-spacing:-.02em; margin-bottom:6px;
-}
-.section-sub {
-    font-size:.88rem; color:#64748B; margin-bottom:24px; line-height:1.5;
-}
-
-/* ══════════════════════════════════════════════════════
-   DASHBOARD
-══════════════════════════════════════════════════════ */
-
-/* Dashboard nav strip */
-#dash-topbar {
-    background:#fff; border-bottom:2px solid #E11D2E;
-    padding:10px 0; margin:0 -32px 20px;
-    display:flex; align-items:center; justify-content:space-between;
-    padding-left:32px; padding-right:32px;
-    box-shadow:0 1px 6px rgba(0,0,0,.06);
-}
-#dash-portfolio-val { font-size:.9rem; font-weight:700; color:#1E293B; }
-
-/* Tab pills */
-.tab-nav button {
-    border-radius:20px !important; padding:7px 20px !important;
-    font-size:.82rem !important; font-weight:600 !important;
-    border:1.5px solid #E2E8F0 !important; background:#fff !important;
-    color:#475569 !important; cursor:pointer !important;
-    box-shadow:0 1px 4px rgba(0,0,0,.05) !important;
-    transition:all .18s ease !important;
-}
-.tab-nav button.selected,
-.tab-nav button[aria-selected="true"] {
-    background:#E11D2E !important; color:#fff !important;
-    border-color:#E11D2E !important;
-    box-shadow:0 3px 10px rgba(225,29,46,.28) !important;
-    transform:translateY(-1px) !important;
-}
-.tab-nav button:hover:not(.selected):not([aria-selected="true"]) {
-    background:#FEF2F2 !important; color:#E11D2E !important;
-    border-color:#FECACA !important;
-}
-
-/* Market pulse */
-#market-pulse {
-    background:#1E293B; border-radius:14px; padding:16px 24px;
-    margin-bottom:18px; display:flex; align-items:center;
-    gap:24px; flex-wrap:wrap; box-shadow:0 4px 18px rgba(0,0,0,.14);
-}
-#pulse-label { font-size:.68rem; font-weight:700; color:#E11D2E;
-               text-transform:uppercase; letter-spacing:.1em; white-space:nowrap; }
-.pulse-item  { display:flex; flex-direction:column; gap:1px; }
-.pulse-name  { font-size:.65rem; color:#94A3B8; font-weight:600; text-transform:uppercase; }
-.pulse-val   { font-size:1rem; font-weight:800; color:#fff; }
-.pulse-chg.up   { font-size:.75rem; font-weight:700; color:#4ADE80; }
-.pulse-chg.down { font-size:.75rem; font-weight:700; color:#F87171; }
-.pulse-div   { width:1px; height:32px; background:rgba(255,255,255,.1); }
-
-/* Stat cards */
-.stat-grid { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
-.stat-card {
-    flex:1; min-width:140px; background:#fff; border-radius:14px;
-    padding:18px 20px; box-shadow:0 2px 10px rgba(0,0,0,.07);
-    text-align:center; transition:transform .2s,box-shadow .2s;
-}
-.stat-card:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.11); }
-.stat-icon  { font-size:1.5rem; margin-bottom:5px; }
-.stat-val   { font-size:1.9rem; font-weight:800; color:#E11D2E; line-height:1; }
-.stat-label { font-size:.73rem; color:#64748B; margin-top:4px; font-weight:500; }
-
-/* Market 2×2 */
-.mkt-grid {
-    display:grid; grid-template-columns:repeat(2,1fr); gap:14px; margin-bottom:20px;
-}
-@media(max-width:520px){ .mkt-grid{grid-template-columns:1fr;} }
-.mkt-card {
-    background:#fff; border-radius:14px; padding:16px 20px;
-    box-shadow:0 2px 10px rgba(0,0,0,.07); border-left:4px solid #E11D2E;
-    transition:transform .2s,box-shadow .2s;
-}
-.mkt-card:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.11); }
-.mkt-name { font-size:.67rem; color:#64748B; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-.mkt-val  { font-size:1.35rem; font-weight:800; color:#1E293B; margin:4px 0 2px; }
-.mkt-chg.up   { color:#16A34A; font-size:.82rem; font-weight:700; }
-.mkt-chg.down { color:#E11D2E; font-size:.82rem; font-weight:700; }
-
-/* Pick cards 2-col */
-.pick-grid {
-    display:grid; grid-template-columns:repeat(2,1fr); gap:14px; margin-bottom:20px;
-}
-@media(max-width:520px){ .pick-grid{grid-template-columns:1fr;} }
-.pick-card {
-    background:#fff; border-radius:14px; padding:16px 20px;
-    box-shadow:0 2px 10px rgba(0,0,0,.07);
-    transition:transform .2s,box-shadow .2s;
-}
-.pick-card.up-card   { border-left:4px solid #16A34A; }
-.pick-card.down-card { border-left:4px solid #E11D2E; }
-.pick-card:hover { transform:translateY(-3px); box-shadow:0 8px 22px rgba(0,0,0,.11); }
-.pick-stock  { font-size:1rem; font-weight:800; color:#1E293B; }
-.pick-reason { font-size:.75rem; color:#64748B; margin-top:5px; line-height:1.4; }
-.conf-bar { height:4px; border-radius:4px; background:#F1F5F9; margin-top:10px; overflow:hidden; }
-.conf-fill { height:100%; border-radius:4px; background:linear-gradient(90deg,#E11D2E,#F97316); }
-
-/* News feed */
-.news-card {
-    display:flex; background:#fff; border-radius:12px; margin-bottom:10px;
-    box-shadow:0 1px 6px rgba(0,0,0,.06); overflow:hidden;
-    transition:transform .18s,box-shadow .18s;
-}
-.news-card:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.10); }
-.news-strip { width:4px; flex-shrink:0; }
-.news-body  { padding:11px 16px; flex:1; }
-.news-headline { font-size:.84rem; color:#1E293B; font-weight:500; line-height:1.45; }
-
-/* Badges */
-.badge {
-    display:inline-block; border-radius:6px;
-    padding:2px 10px; font-size:.7rem; font-weight:700; letter-spacing:.04em;
-}
-.badge-buy   { background:#DCFCE7; color:#15803D; }
-.badge-hold  { background:#FEF9C3; color:#854D0E; }
-.badge-sell  { background:#FEE2E2; color:#B91C1C; }
-.badge-pos   { background:#DCFCE7; color:#15803D; }
-.badge-neg   { background:#FEE2E2; color:#B91C1C; }
-.badge-neu   { background:#F1F5F9; color:#475569; }
-.badge-ai    { background:#EDE9FE; color:#6D28D9; }
-.badge-alert { background:#FEF3C7; color:#92400E; }
-.badge-mkt   { background:#E0F2FE; color:#0369A1; }
-
-/* Generic card */
-.card {
-    background:#fff; border-radius:14px; padding:18px 22px;
-    box-shadow:0 2px 10px rgba(0,0,0,.07); margin-bottom:14px;
-    transition:transform .2s,box-shadow .2s;
-}
-.card:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,.11); }
-
-/* Confidence */
-.conf-big   { font-size:2.8rem; font-weight:800; line-height:1; }
-.conf-label { font-size:.76rem; color:#64748B; margin-top:3px; }
-
-/* Metric chips */
-.metric-row { display:flex; flex-wrap:wrap; gap:10px; margin:10px 0; }
-.metric-chip {
-    background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px;
-    padding:10px 16px; min-width:140px; box-shadow:0 1px 3px rgba(0,0,0,.04);
-    transition:transform .18s,box-shadow .18s;
-}
-.metric-chip:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.09); }
-.metric-chip .mc-label { font-size:.65rem; color:#94A3B8; text-transform:uppercase; letter-spacing:.06em; }
-.metric-chip .mc-val   { font-size:1.1rem; font-weight:800; color:#1E293B; margin-top:3px; }
-
-/* Portfolio */
-.port-summary {
-    background:linear-gradient(135deg,#1E293B,#334155);
-    border-radius:14px; padding:20px 24px; margin-bottom:16px;
-    display:flex; justify-content:space-between; align-items:center;
-    box-shadow:0 4px 20px rgba(0,0,0,.14);
-}
-.port-card {
-    background:#fff; border-radius:14px; padding:14px 20px;
-    box-shadow:0 2px 10px rgba(0,0,0,.07); margin-bottom:10px;
-    display:flex; justify-content:space-between; align-items:center;
-    transition:transform .18s,box-shadow .18s;
-}
-.port-card:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.11); }
-.port-stock { font-size:.95rem; font-weight:800; color:#1E293B; }
-.port-meta  { font-size:.75rem; color:#64748B; margin-top:2px; }
-.port-val   { font-size:1rem; font-weight:700; color:#1E293B; text-align:right; }
-
-/* Decision stepper */
-.step-item {
-    display:flex; align-items:flex-start; gap:14px;
-    border-radius:12px; padding:13px 18px; margin-bottom:8px;
-    border-left:3px solid; transition:transform .18s;
-}
-.step-item:hover { transform:translateX(3px); }
-
-/* Buttons */
-.btn-primary {
-    background:#E11D2E !important; color:#fff !important;
-    border-radius:10px !important; border:none !important;
-    font-weight:700 !important; padding:11px 28px !important;
-    font-size:.9rem !important; cursor:pointer !important;
-    box-shadow:0 3px 10px rgba(225,29,46,.28) !important;
-    transition:transform .15s,background .15s,box-shadow .15s !important;
-}
-.btn-primary:hover {
-    background:#B91C1C !important; transform:scale(1.03) !important;
-    box-shadow:0 5px 16px rgba(225,29,46,.38) !important;
-}
-.btn-outline {
-    background:transparent !important; color:#E11D2E !important;
-    border:2px solid #E11D2E !important; border-radius:10px !important;
-    font-weight:700 !important; padding:9px 24px !important;
-    font-size:.9rem !important; cursor:pointer !important;
-    transition:transform .15s,background .15s !important;
-}
-.btn-outline:hover { background:#FEF2F2 !important; transform:scale(1.03) !important; }
-
-/* Alert */
-.alert-box {
-    background:#FEF2F2; border:1px solid #FECACA; border-radius:12px;
-    padding:13px 18px; color:#B91C1C; font-size:.86rem; margin:8px 0;
-}
-
-/* Section label */
-.sec-header {
-    font-size:.68rem; font-weight:700; color:#94A3B8;
-    text-transform:uppercase; letter-spacing:.1em; margin:18px 0 10px;
-}
-
-/* Inputs */
-textarea, input[type=text], input[type=number] {
-    border-radius:10px !important; border:1.5px solid #E2E8F0 !important;
-    font-size:.88rem !important; background:#fff !important;
-    transition:border-color .15s,box-shadow .15s !important;
-}
-textarea:focus, input:focus {
-    border-color:#E11D2E !important; outline:none !important;
-    box-shadow:0 0 0 3px rgba(225,29,46,.10) !important;
-}
-
-/* Responsive */
-@media(max-width:768px){
-    .gradio-container { padding:0 0 32px !important; }
-    .page { padding:0 16px; }
-    #sitenav { padding:0 16px; }
-    #dash-topbar { padding-left:16px; padding-right:16px; margin:0 -16px 16px; }
-    #market-pulse { padding:14px 16px; gap:14px; }
-}
-
-/* Hide Gradio chrome */
-footer { display:none !important; }
-.gr-prose { font-size:.88rem !important; }
-.gradio-container .tabs { background:transparent !important; }
+DEMO_REPORT_CONTENT = """Company: TCS
+Revenue increased to Rs. 2,10,000 Cr
+Net profit grew by 12%
+Strong deal pipeline
+Risks: margin pressure, global slowdown
 """
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HTML BUILDERS
-# ─────────────────────────────────────────────────────────────────────────────
+I18N = {
+    "en": {
+        "app_name": "InvestorCoPilot AI",
+        "hero_title": "InvestorCoPilot AI",
+        "hero_sub": "AI that thinks like an investor, not just predicts",
+        "hero_tag": "Transparent. Reliable. Built for Indian investors",
+        "start_demo": "Start Demo",
+        "view_how": "View How It Works",
+        "problem_solution": "Problem + Solution",
+        "how_it_works": "How It Works",
+        "cta": "Start Using Demo",
+        "dashboard": "Dashboard",
+        "market_cards": "Market Cards",
+        "opportunities": "Opportunities",
+        "insights": "Insights",
+        "analyze": "Analyze",
+        "portfolio": "Demo Portfolio",
+        "demo_user": "Demo User: Rahul Sharma",
+        "demo_note": "Sample portfolio for demo",
+        "ai_label": "AI Mode: ON / OFF",
+        "ai_enabled": "AI Enabled",
+        "ai_disabled": "AI Disabled (Fast Mode)",
+        "reason_title": "How this insight was generated",
+        "ask": "Ask",
+        "ask_placeholder": "Ask about your stock or market",
+        "add_position": "Add Position",
+        "back_home": "Back to Landing",
+        "lang": "Language",
+        "trace_title": "Agent Thought Process Flow",
+    },
+    "hi": {
+        "app_name": "इन्वेस्टरकोपायलट एआई",
+        "hero_title": "इन्वेस्टरकोपायलट एआई",
+        "hero_sub": "ऐसा AI जो निवेशक की तरह सोचता है, सिर्फ भविष्यवाणी नहीं करता",
+        "hero_tag": "पारदर्शी। भरोसेमंद। भारतीय निवेशकों के लिए",
+        "start_demo": "डेमो शुरू करें",
+        "view_how": "कैसे काम करता है",
+        "problem_solution": "समस्या + समाधान",
+        "how_it_works": "यह कैसे काम करता है",
+        "cta": "डेमो उपयोग शुरू करें",
+        "dashboard": "डैशबोर्ड",
+        "market_cards": "मार्केट कार्ड्स",
+        "opportunities": "अवसर",
+        "insights": "इनसाइट्स",
+        "analyze": "विश्लेषण करें",
+        "portfolio": "डेमो पोर्टफोलियो",
+        "demo_user": "डेमो यूज़र: राहुल शर्मा",
+        "demo_note": "डेमो के लिए सैंपल पोर्टफोलियो",
+        "ai_label": "AI मोड: ON / OFF",
+        "ai_enabled": "AI सक्षम",
+        "ai_disabled": "AI बंद (फास्ट मोड)",
+        "reason_title": "यह इनसाइट कैसे बनी",
+        "ask": "पूछें",
+        "ask_placeholder": "अपने स्टॉक या मार्केट के बारे में पूछें",
+        "add_position": "पोजिशन जोड़ें",
+        "back_home": "लैंडिंग पर वापस",
+        "lang": "भाषा",
+        "trace_title": "एजेंट विचार प्रक्रिया प्रवाह",
+    },
+}
 
-def _sitenav_html() -> str:
-    holdings = pm.get_all_holdings("demo_user")
-    total    = sum(h["quantity"] * h["avg_price"] for h in holdings)
-    return f"""
-<div id="sitenav">
-  <div id="sitenav-logo" onclick="showPage('landing')">
-    InvestorCoPilot <span>AI</span>
-  </div>
-  <div id="sitenav-links">
-    <button class="snav-btn" onclick="showPage('landing')">Home</button>
-    <button class="snav-btn" onclick="showPage('landing'); scrollTo('#features')">Features</button>
-    <button class="snav-cta" onclick="showPage('dashboard')">🚀 Launch App</button>
-  </div>
-  <div id="sitenav-right">
-    <span style="font-size:.82rem;font-weight:600;color:#1E293B">Demo Portfolio ₹{total:,.0f}</span>
-    <span id="demo-pill">Demo User: Rahul Sharma</span>
-    <span id="status-pill">Active</span>
-  </div>
-</div>
-<script>
-function showPage(id) {{
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  var el = document.getElementById('page-' + id);
-  if (el) el.classList.add('active');
-  window.scrollTo({{top:0, behavior:'smooth'}});
-}}
-function scrollTo(sel) {{
-  setTimeout(function(){{
-    var el = document.querySelector(sel);
-    if (el) el.scrollIntoView({{behavior:'smooth'}});
-  }}, 100);
-}}
-// Start on landing
-document.addEventListener('DOMContentLoaded', function() {{ showPage('landing'); }});
-</script>"""
+MARKET_DATA = [
+    {"index": "NIFTY 50", "value": 22147, "change": 0.43},
+    {"index": "SENSEX", "value": 73088, "change": 0.38},
+    {"index": "BANK NIFTY", "value": 47312, "change": -0.12},
+    {"index": "NIFTY IT", "value": 35640, "change": 1.21},
+]
+
+TOP_PICKS = [
+    {"stock": "TCS", "signal": "BUY", "conf": 87, "reason": "Strong earnings momentum"},
+    {"stock": "INFOSYS", "signal": "BUY", "conf": 81, "reason": "Healthy deal pipeline"},
+    {"stock": "RELIANCE", "signal": "HOLD", "conf": 72, "reason": "Balanced risk-reward"},
+    {"stock": "HDFCBANK", "signal": "HOLD", "conf": 68, "reason": "Watch margin pressure"},
+]
+
+NEWS_ITEMS = [
+    "TCS shows resilient growth with enterprise demand stability.",
+    "RBI status quo supports near-term banking sector sentiment.",
+    "IT basket sees improved confidence after guidance commentary.",
+]
+
+CSS = """
+:root {
+  --primary: #E11D2E;
+  --bg: #F5F5F5;
+  --text: #0F172A;
+  --muted: #64748B;
+  --card: #FFFFFF;
+  --good: #16A34A;
+  --warn: #D97706;
+}
+* { box-sizing: border-box; }
+body, .gradio-container {
+  background: linear-gradient(180deg, #fff1f2 0%, #ffe4e6 45%, #fff1f2 100%) !important;
+  font-family: Inter, Segoe UI, sans-serif !important;
+}
+.gradio-container {
+  max-width: 100% !important;
+  width: 100% !important;
+  margin: 0 auto !important;
+  padding: 0 8px 20px !important;
+}
+footer { display: none !important; }
+.main, .wrap { max-width: 100% !important; padding: 0 !important; }
+.control-strip {
+  background: #fff;
+  border: 1px solid #fecdd3;
+  border-radius: 14px;
+  padding: 8px 10px;
+  box-shadow: 0 8px 20px rgba(225, 29, 46, .08);
+  margin-bottom: 10px;
+}
+.control-strip .wrap,
+.control-strip .block {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.control-label {
+  font-size: .72rem;
+  color: #64748B;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.fade-page {
+  animation: fadeUp .35s ease;
+}
+
+.topbar {
+  background: linear-gradient(120deg, #ffffff, #ffe4e6);
+  border-bottom: 1px solid #fecdd3;
+  border-radius: 0 0 14px 14px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  box-shadow: 0 6px 18px rgba(2, 8, 23, .06);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand {
+  font-size: 1.05rem;
+  font-weight: 900;
+  color: var(--primary);
+}
+.demo-meta {
+  font-size: .75rem;
+  color: #64748B;
+  font-weight: 600;
+}
+.pill {
+  font-size: .72rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 18px;
+  background: linear-gradient(145deg, #fff7f7, #fecdd3);
+  border-radius: 18px;
+  padding: 28px;
+  box-shadow: 0 10px 24px rgba(2, 8, 23, .08);
+  min-height: 290px;
+}
+.hero h1 {
+  margin: 0 0 8px;
+  font-size: 2.3rem;
+  color: var(--text);
+}
+.hero p {
+  margin: 6px 0;
+  color: #475569;
+}
+
+.float-area { position: relative; min-height: 240px; }
+.float-card {
+  position: absolute;
+  width: 210px;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(2, 8, 23, .14);
+  animation: floatY 4s ease-in-out infinite;
+}
+.float-card:nth-child(1) { top: 0; left: 0; }
+.float-card:nth-child(2) { top: 70px; left: 75px; animation-delay: .8s; }
+.float-card:nth-child(3) { top: 140px; left: 18px; animation-delay: 1.6s; }
+
+.section {
+  margin-top: 22px;
+}
+.section-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.flow {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+.card {
+  background: linear-gradient(180deg, #ffffff 0%, #fff7f7 100%);
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid #fee2e2;
+  box-shadow: 0 8px 20px rgba(225, 29, 46, .10);
+  transition: transform .2s, box-shadow .2s;
+}
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 28px rgba(2, 8, 23, .12);
+}
+.dash-shell {
+  background: linear-gradient(180deg, #fff, #fff5f5);
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #fecdd3;
+  box-shadow: 0 12px 28px rgba(225, 29, 46, .10);
+}
+.dash-title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #0F172A;
+  margin: 0 0 8px;
+}
+.dash-sub {
+  font-size: .85rem;
+  color: #64748B;
+  margin: 0 0 14px;
+}
+
+.icon-wrap {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.icon-red { background: #fee2e2; color: #b91c1c; }
+.icon-blue { background: #dbeafe; color: #1d4ed8; }
+.icon-green { background: #dcfce7; color: #166534; }
+.icon-amber { background: #fef3c7; color: #92400e; }
+
+.icon {
+  width: 18px;
+  height: 18px;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.badge-buy { background: #dcfce7; color: #166534; }
+.badge-hold { background: #fef3c7; color: #92400e; }
+
+.kicker {
+  font-size: .74rem;
+  color: var(--muted);
+}
+.val {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.reason-step {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: #f8fafc;
+  border-left: 3px solid var(--primary);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.btn-primary {
+  background: var(--primary) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-weight: 700 !important;
+  transition: transform .2s ease, background .2s ease !important;
+}
+.btn-primary:hover {
+  background: #be123c !important;
+  transform: scale(1.03) !important;
+}
+.btn-secondary {
+  background: #fff !important;
+  color: var(--primary) !important;
+  border: 1.5px solid var(--primary) !important;
+  border-radius: 10px !important;
+  font-weight: 700 !important;
+  transition: transform .2s ease !important;
+}
+.btn-secondary:hover {
+  transform: scale(1.03) !important;
+}
+.btn-light-cta {
+  background: #fff !important;
+  color: #B91C1C !important;
+  border: 1.5px solid #fecaca !important;
+  border-radius: 10px !important;
+  font-weight: 800 !important;
+  transition: transform .2s ease, box-shadow .2s ease !important;
+}
+.btn-light-cta:hover {
+  transform: scale(1.03) !important;
+  box-shadow: 0 10px 20px rgba(225, 29, 46, .18) !important;
+}
+.btn-chip {
+  border-radius: 999px !important;
+  border: 1px solid #fecaca !important;
+  background: #fff1f2 !important;
+  color: #be123c !important;
+  font-weight: 700 !important;
+}
+
+/* Better Gradio tabs look */
+.tabs {
+  background: transparent !important;
+}
+.tabs button {
+  border: 1.5px solid #e2e8f0 !important;
+  border-radius: 999px !important;
+  padding: 8px 16px !important;
+  font-weight: 700 !important;
+  background: #fff !important;
+  color: #475569 !important;
+  transition: all .2s ease !important;
+}
+.tabs button:hover {
+  border-color: #fda4af !important;
+  color: #be123c !important;
+}
+.tabs button[aria-selected="true"] {
+  background: #E11D2E !important;
+  color: #fff !important;
+  border-color: #E11D2E !important;
+  box-shadow: 0 8px 18px rgba(225, 29, 46, .28) !important;
+}
+.how-focus {
+  outline: 2px solid #fb7185;
+  box-shadow: 0 0 0 6px rgba(225, 29, 46, .12);
+  transition: all .25s ease;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 12px;
+}
+.input-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px;
+}
+.output-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+/* Cleaner file drop area */
+.gradio-container .file-preview,
+.gradio-container .file-wrap,
+.gradio-container .file-dropzone {
+  border-radius: 10px !important;
+}
+
+@media (max-width: 980px) {
+  .hero { grid-template-columns: 1fr; }
+  .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .flow { grid-template-columns: repeat(2, 1fr); }
+  .analysis-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .grid-4, .grid-2, .flow { grid-template-columns: 1fr; }
+  .float-area { min-height: 0; }
+  .float-card {
+    position: relative;
+    width: 100%;
+    top: auto;
+    left: auto;
+    margin-bottom: 8px;
+    animation: none;
+  }
+  .topbar { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .topbar-right { width: 100%; justify-content: space-between; }
+  .output-grid { grid-template-columns: 1fr; }
+  .control-strip { padding: 8px; }
+}
+"""
 
 
-# ── Landing page sections ─────────────────────────────────────────────────────
-
-def _hero_section() -> str:
-    float_cards = """
-    <div class="hv-card">
-      <div class="hv-ticker">TCS</div>
-      <div class="hv-val">₹3,920</div>
-      <span class="badge badge-buy">▲ BUY &nbsp; 87%</span>
-    </div>
-    <div class="hv-card">
-      <div class="hv-ticker">RELIANCE</div>
-      <div class="hv-val">₹2,910</div>
-      <span class="badge badge-hold">● HOLD &nbsp; 72%</span>
-    </div>
-    <div class="hv-card">
-      <div class="hv-ticker">INFOSYS</div>
-      <div class="hv-val">₹1,560</div>
-      <span class="badge badge-buy">▲ BUY &nbsp; 81%</span>
-    </div>"""
-    return f"""
-<div id="hero">
-  <div>
-    <div id="hero-eyebrow">🇮🇳 Built for the Indian Investor</div>
-    <div id="hero-title">InvestorCoPilot <span>AI</span></div>
-    <p id="hero-sub">
-      An AI-powered investment assistant that thinks step-by-step,
-      explains every decision, and reduces blind investing.
-    </p>
-    <p id="hero-tagline">Transparent. Intelligent. Reliable.</p>
-    <div id="hero-btns">
-      <button class="btn-primary" onclick="showPage('dashboard')">🚀 Start Demo</button>
-      <button class="btn-outline" onclick="scrollTo('#features')">📊 View Features</button>
-    </div>
-  </div>
-  <div id="hero-visual">{float_cards}</div>
-</div>"""
+def tr(lang: str, key: str) -> str:
+    return I18N.get(lang, I18N["en"]).get(key, I18N["en"].get(key, key))
 
 
-def _problem_section() -> str:
-    cards = [
-        ("📈", "AI vs Human Analysts",
-         "Studies suggest AI models can reach ~60% prediction accuracy in financial markets.",
-         "Our goal: Improve this to 80–85% using structured reasoning + multi-step validation"),
-        ("⚠️", "Blind AI Reliance Problem",
-         "AI cannot replace human judgment in complex, fast-moving markets.",
-         "Our solution: Confidence scoring + full reasoning transparency on every insight"),
-        ("🌏", "Accessibility Gap",
-         "Most investment tools are not accessible to non-English speaking Indian investors.",
-         "Future-ready: Vernacular language support planned for Hindi, Tamil, Telugu"),
-        ("🌱", "AI Energy Concern",
-         "AI queries consume significantly more energy than traditional software.",
-         "Optimized hybrid system: deterministic logic first, minimal AI usage only when needed"),
-    ]
-    html = ""
-    for icon, title, body, highlight in cards:
-        html += f"""
-        <div class="ps-card">
-          <div class="ps-icon">{icon}</div>
-          <div class="ps-title">{title}</div>
-          <p class="ps-body">{body}</p>
-          <div class="ps-highlight">{highlight}</div>
-        </div>"""
-    return f"""
-<div style="margin-bottom:56px">
-  <div class="section-title">Problems We're Solving</div>
-  <div class="section-sub">Why InvestorCoPilot AI exists — and why it matters for judges and investors alike.</div>
-  <div class="ps-grid">{html}</div>
-</div>"""
-
-
-def _how_section() -> str:
-    steps = [
-        ("📄", "User Input",    "Upload PDF or ask a question"),
-        ("🤖", "Agent Plans",   "Decides which tools to run"),
-        ("🔧", "Tools Execute", "Extract, analyze, score"),
-        ("📊", "Output Ready",  "Structured insight generated"),
-        ("🎯", "Confidence",    "Reliability score attached"),
-    ]
-    items = ""
-    for i, (icon, label, desc) in enumerate(steps):
-        items += f"""
-        <div class="how-step">
-          <div class="how-icon">{icon}</div>
-          <div class="how-label">{label}</div>
-          <div class="how-desc">{desc}</div>
-        </div>"""
-        if i < len(steps) - 1:
-            items += '<div class="how-arrow">→</div>'
-    return f"""
-<div id="how-section">
-  <div class="section-title">How It Works</div>
-  <div class="section-sub">A transparent, step-by-step agentic pipeline — no black boxes.</div>
-  <div class="how-flow">{items}</div>
-</div>"""
-
-
-def _features_section() -> str:
-    feats = [
-        ("🧠", "Agent-Based Reasoning",
-         "A planning agent decides which tools to invoke, in what order, based on your query — just like a human analyst would."),
-        ("📊", "Portfolio-Aware Insights",
-         "Every analysis is cross-referenced with your holdings to surface only what's relevant to you."),
-        ("📉", "Confidence Scoring",
-         "Every insight comes with a deterministic confidence score — no guessing, no hallucination."),
-        ("⚙️", "Works Without AI Dependency",
-         "Core extraction and scoring uses pure regex + rule-based logic. AI (Ollama) is optional and gracefully skipped."),
-    ]
-    html = ""
-    for icon, title, desc in feats:
-        html += f"""
-        <div class="feat-card">
-          <div class="feat-icon-wrap">{icon}</div>
-          <div>
-            <div class="feat-title">{title}</div>
-            <div class="feat-desc">{desc}</div>
-          </div>
-        </div>"""
-    return f"""
-<div id="features" style="margin-bottom:56px">
-  <div class="section-title">Key Features</div>
-  <div class="section-sub">What makes InvestorCoPilot AI different from a generic chatbot.</div>
-  <div class="feat-grid">{html}</div>
-</div>"""
-
-
-def _landing_cta_section() -> str:
-    return """
-<div id="landing-cta">
-  <div style="font-size:1.6rem;font-weight:800;color:#fff;margin-bottom:10px">
-    Ready to see it in action?
-  </div>
-  <div style="font-size:.92rem;color:rgba(255,255,255,.75);margin-bottom:24px">
-    Upload a real PDF report and watch the agent reason through it — step by step.
-  </div>
-  <button class="btn-primary" onclick="showPage('dashboard')"
-          style="font-size:1rem;padding:13px 36px">
-    🚀 Start Using Demo
-  </button>
-</div>"""
-
-
-def _full_landing_html() -> str:
+def lucide(path_data: str) -> str:
     return (
-        _hero_section()
-        + _problem_section()
-        + _how_section()
-        + _features_section()
-        + _landing_cta_section()
+        "<svg class='icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' "
+        "stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+        f"{path_data}</svg>"
     )
 
 
-# ── Dashboard helpers ─────────────────────────────────────────────────────────
+def generate_demo_pdf() -> str:
+    project_root = Path(__file__).resolve().parents[1]
+    txt_path = project_root / "demo_report.txt"
+    txt_path.write_text(DEMO_REPORT_CONTENT, encoding="utf-8")
 
-def _dash_topbar_html() -> str:
+    pdf_path = project_root / "demo_report.pdf"
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+
+        c = canvas.Canvas(str(pdf_path), pagesize=A4)
+        y = 800
+        for line in DEMO_REPORT_CONTENT.strip().splitlines():
+            c.drawString(72, y, line)
+            y -= 22
+        c.save()
+        return str(pdf_path)
+    except Exception:
+        return str(txt_path)
+
+
+def topbar_html(lang: str) -> str:
     holdings = pm.get_all_holdings("demo_user")
-    total    = sum(h["quantity"] * h["avg_price"] for h in holdings)
-    return f"""
-<div id="dash-topbar">
-  <span style="font-size:.8rem;color:#64748B">
-    👤 <strong>Rahul Sharma</strong> &nbsp;·&nbsp; Demo portfolio for showcasing personalized insights
-  </span>
-  <span id="dash-portfolio-val">Demo Portfolio ₹{total:,.0f}</span>
-</div>"""
+    total = sum(h["quantity"] * h["avg_price"] for h in holdings)
+    return (
+        "<div class='topbar'>"
+        f"<div><div class='brand'>{tr(lang, 'app_name')}</div><div class='demo-meta'>{tr(lang, 'demo_note')}</div></div>"
+        "<div class='topbar-right'>"
+        f"<div class='demo-meta'>Portfolio Value: Rs. {total:,.0f}</div>"
+        f"<div class='pill'>{tr(lang, 'demo_user')}</div>"
+        "</div>"
+        "</div>"
+    )
 
 
-def _market_pulse_html() -> str:
-    items = ""
-    for i, m in enumerate(MARKET_DATA):
-        cls = "up" if m["up"] else "down"
-        arrow = "▲" if m["up"] else "▼"
-        items += f"""
-        <div class="pulse-item">
-          <span class="pulse-name">{m['index']}</span>
-          <span class="pulse-val">{m['value']}</span>
-          <span class="pulse-chg {cls}">{arrow} {m['change']}</span>
-        </div>"""
-        if i < len(MARKET_DATA) - 1:
-            items += '<div class="pulse-div"></div>'
-    return f'<div id="market-pulse"><span id="pulse-label">📡 Market Pulse</span>{items}</div>'
+def landing_html(lang: str) -> str:
+    card_1 = (
+        "<div class='float-card'>"
+        "<div class='kicker'>TCS</div><div><b>BUY</b> - 87%</div>"
+        "</div>"
+    )
+    card_2 = (
+        "<div class='float-card'>"
+        "<div class='kicker'>INFOSYS</div><div><b>BUY</b> - 81%</div>"
+        "</div>"
+    )
+    card_3 = (
+        "<div class='float-card'>"
+        "<div class='kicker'>HDFCBANK</div><div><b>HOLD</b> - 68%</div>"
+        "</div>"
+    )
 
-
-def _stat_cards_html() -> str:
-    stats = [("📡","47","Signals today"),("💡","12","Insights generated"),("🎯","78%","Avg confidence")]
-    cards = "".join(f"""
-    <div class="stat-card">
-      <div class="stat-icon">{i}</div>
-      <div class="stat-val">{v}</div>
-      <div class="stat-label">{l}</div>
-    </div>""" for i,v,l in stats)
-    return f'<div class="stat-grid">{cards}</div>'
-
-
-def _markets_tab_html() -> str:
-    mkt = "".join(f"""
-    <div class="mkt-card">
-      <div class="mkt-name">{m['index']}</div>
-      <div class="mkt-val">{m['value']}</div>
-      <div class="mkt-chg {'up' if m['up'] else 'down'}">{'▲' if m['up'] else '▼'} {m['change']}</div>
-    </div>""" for m in MARKET_DATA)
-
-    sig_cls = {"BUY":"badge-buy","HOLD":"badge-hold","SELL":"badge-sell"}
-    picks = "".join(f"""
-    <div class="pick-card {'up-card' if p['up'] else 'down-card'}">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span class="pick-stock">{p['stock']}</span>
-        <span class="badge {sig_cls[p['signal']]}">{p['signal']}</span>
-      </div>
-      <div class="pick-reason">{p['reason']}</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
-        <div class="conf-bar" style="flex:1"><div class="conf-fill" style="width:{p['conf']}%"></div></div>
-        <span style="font-size:.73rem;font-weight:700;color:#475569">{p['conf']}%</span>
-      </div>
-    </div>""" for p in TOP_PICKS)
-
-    tag_color = {"AI Insight":"#6D28D9","Alert":"#D97706","Market":"#0369A1"}
-    tag_badge = {"AI Insight":"badge-ai","Alert":"badge-alert","Market":"badge-mkt"}
-    news = "".join(f"""
-    <div class="news-card">
-      <div class="news-strip" style="background:{tag_color.get(n['tag'],'#94A3B8')}"></div>
-      <div class="news-body">
-        <span class="badge {tag_badge.get(n['tag'],'badge-mkt')}"
-              style="margin-bottom:5px;display:inline-block">{n['tag']}</span>
-        <div class="news-headline">{n['headline']}</div>
-      </div>
-    </div>""" for n in NEWS_ITEMS)
-
-    return f"""
-{_market_pulse_html()}
-{_stat_cards_html()}
-<div class="sec-header">Market Overview</div>
-<div class="mkt-grid">{mkt}</div>
-<div class="sec-header">Top Opportunities</div>
-<div class="pick-grid">{picks}</div>
-<div class="sec-header">Latest Insights</div>
-{news}"""
-
-
-def _metric_chips(metrics: dict) -> str:
-    labels = {"revenue":"Revenue (₹ Cr)","profit":"Net Profit (₹ Cr)","margin":"Margin %","growth":"YoY Growth %"}
-    chips = "".join(f"""
-    <div class="metric-chip">
-      <div class="mc-label">{label}</div>
-      <div class="mc-val">{f"{metrics[k]:,.2f}" if metrics.get(k) is not None else "—"}</div>
-    </div>""" for k, label in labels.items())
-    return f'<div class="metric-row">{chips}</div>'
-
-
-def _sentiment_badge(sentiment: dict) -> str:
-    label = sentiment.get("sentiment","neutral")
-    score = sentiment.get("score",0.5)
-    pos   = sentiment.get("positive_signals",0)
-    neg   = sentiment.get("negative_signals",0)
-    cls   = {"positive":"badge-pos","negative":"badge-neg"}.get(label,"badge-neu")
-    icon  = {"positive":"▲","negative":"▼"}.get(label,"●")
-    bg    = {"positive":"#F0FDF4","negative":"#FEF2F2"}.get(label,"#F8FAFC")
-    return f"""
-<div class="card" style="display:flex;align-items:center;gap:18px;background:{bg}">
-  <span class="badge {cls}" style="font-size:.88rem;padding:5px 16px">{icon} {label.upper()}</span>
-  <div style="font-size:.8rem;color:#64748B">
-    Score <strong>{score:.2f}</strong> &nbsp;|&nbsp;
-    <span style="color:#16A34A;font-weight:600">+{pos} positive</span> &nbsp;
-    <span style="color:#E11D2E;font-weight:600">−{neg} negative</span>
-  </div>
-</div>"""
-
-
-def _confidence_card(conf: dict) -> str:
-    pct   = conf.get("percentage",0)
-    label = conf.get("label","Low")
-    color = "#16A34A" if pct>=80 else "#D97706" if pct>=50 else "#E11D2E"
-    factors = "".join(f"""
-    <div style="display:flex;gap:8px;align-items:center;padding:5px 0;
-                border-bottom:1px solid #F1F5F9;font-size:.79rem;color:#475569">
-      <span>{"✅" if "✅" in f else "⚠️" if "⚠️" in f else "❌"}</span><span>{f}</span>
-    </div>""" for f in conf.get("factors",[]))
-    return f"""
-<div class="card" style="display:flex;gap:24px;align-items:flex-start">
-  <div style="text-align:center;min-width:88px">
-    <div class="conf-big" style="color:{color}">{pct}%</div>
-    <div class="conf-label">{label} Confidence</div>
-    <div style="height:5px;border-radius:5px;background:#F1F5F9;margin-top:8px;overflow:hidden">
-      <div style="height:100%;width:{pct}%;background:{color};border-radius:5px"></div>
-    </div>
-  </div>
-  <div style="flex:1">{factors}</div>
-</div>"""
-
-
-def _portfolio_impact_card(impact: dict) -> str:
-    msg   = impact.get("note") or impact.get("impact_message","No portfolio data.")
-    sig   = impact.get("sentiment_signal","neutral")
-    cls   = {"positive":"badge-pos","negative":"badge-neg"}.get(sig,"badge-neu")
-    count = impact.get("positions_affected",0)
-    return f"""
-<div class="card">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <span style="font-weight:700;font-size:.92rem;color:#1E293B">Portfolio Impact</span>
-    <span class="badge {cls}">{sig.upper()}</span>
-  </div>
-  <div style="font-size:.84rem;color:#475569;line-height:1.5">{msg}</div>
-  <div style="font-size:.74rem;color:#94A3B8;margin-top:8px">{count} position(s) affected</div>
-</div>"""
-
-
-def _trace_html(trace: list) -> str:
-    STEP_MAP = [
-        ("receive_task",       "Request received",       "Your query was received and the analysis was started."),
-        ("plan_created",       "Analysis plan created",  "Decided which tools to run and in what order."),
-        ("document_processor", "Document extracted",     "Read and extracted text from the uploaded report."),
-        ("metric_extractor",   "Key metrics identified", "Found financial figures like revenue, profit, and margins."),
-        ("sentiment_analyzer", "Sentiment analysed",     "Scanned the report for positive and negative signals."),
-        ("portfolio_manager",  "Portfolio checked",      "Looked up your holdings to assess relevance."),
-        ("alert_scanner",      "Alerts scanned",         "Checked for any active alerts on your positions."),
-        ("confidence_engine",  "Confidence calculated",  "Scored the reliability of this analysis."),
-        ("ai_enhancer",        "AI summary generated",   "Created a plain-English summary of the findings."),
-        ("question_classifier","Question understood",    "Classified your question to find the best answer."),
-        ("task_complete",      "Analysis complete",      "All steps finished. Results are ready."),
+    problem_cards = [
+        (
+            "icon-red",
+            lucide("<path d='M12 2v20'/><path d='M2 12h20'/>"),
+            "AI Accuracy Problem",
+            "AI ~60% prediction -> We aim 80-85% using structured reasoning",
+        ),
+        (
+            "icon-blue",
+            lucide("<path d='M12 8v4'/><path d='M12 16h.01'/><path d='M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'/>"),
+            "Blind Trust Issue",
+            "AI alone is risky -> We add confidence + explanation",
+        ),
+        (
+            "icon-green",
+            lucide("<path d='M2 12h20'/><path d='M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'/>"),
+            "Accessibility Gap",
+            "Add vernacular support (Hindi, basic multi-language UI toggle)",
+        ),
+        (
+            "icon-amber",
+            lucide("<path d='M7 20h10'/><path d='M10 20c5.5-2.5.8-6.4 3-10'/><path d='M9.5 9.4c1.5 1.8 4.3 2.8 5.8 2.2'/>"),
+            "Sustainability",
+            "Reduce AI usage via deterministic logic",
+        ),
     ]
-    def _st(r):
-        l = r.lower()
-        return "error" if "error:" in l else "done"
+    problem_html = "".join(
+        [
+            f"<div class='card'><span class='icon-wrap {klass}'>{icn}</span><h4>{title}</h4><div class='kicker'>{desc}</div></div>"
+            for klass, icn, title, desc in problem_cards
+        ]
+    )
 
-    COLOR = {"done":"#15803D","error":"#B91C1C"}
-    BG    = {"done":"#F0FDF4","error":"#FEF2F2"}
-    ICON  = {"done":"✅","error":"❌"}
-    LBL   = {"done":"Completed","error":"Failed"}
+    flow = [
+        ("User", "icon-blue", lucide("<path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/><circle cx='12' cy='7' r='4'/>")),
+        ("Agent", "icon-red", lucide("<rect x='3' y='3' width='18' height='18' rx='2'/><path d='M9 9h6v6H9z'/>")),
+        ("Tools", "icon-green", lucide("<path d='M12 1v22'/><path d='M5 5l14 14'/><path d='M19 5 5 19'/>")),
+        ("Output", "icon-amber", lucide("<path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/><polyline points='17 3 21 3 21 7'/><line x1='10' y1='14' x2='21' y2='3'/>")),
+        ("Confidence", "icon-red", lucide("<path d='M12 2l7 4v6c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-4z'/>")),
+    ]
+    flow_html = "".join(
+        [
+            f"<div class='card'><span class='icon-wrap {klass}'>{icn}</span><b>{label}</b></div>"
+            for label, klass, icn in flow
+        ]
+    )
 
-    seen, steps = set(), []
-    for raw in trace:
-        for token, label, desc in STEP_MAP:
-            if token in raw.lower() and token not in seen:
-                seen.add(token)
-                st = _st(raw)
-                steps.append((ICON[st], label, desc, st))
-                break
-
-    if not steps:
-        return "<p style='color:#94A3B8;font-size:.82rem;padding:8px 0'>No steps recorded.</p>"
-
-    items = ""
-    for i, (icon, label, desc, st) in enumerate(steps, 1):
-        items += f"""
-        <div class="step-item" style="background:{BG[st]};border-color:{COLOR[st]}">
-          <div style="font-size:1.3rem;line-height:1">{icon}</div>
-          <div style="flex:1">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-              <span style="font-size:.73rem;font-weight:700;color:#94A3B8">Step {i}</span>
-              <span style="font-size:.69rem;font-weight:700;color:{COLOR[st]};
-                           background:#fff;border:1px solid {COLOR[st]};
-                           border-radius:20px;padding:1px 8px">{LBL[st]}</span>
-            </div>
-            <div style="font-size:.9rem;font-weight:700;color:#1E293B">{label}</div>
-            <div style="font-size:.77rem;color:#64748B;margin-top:2px">{desc}</div>
-          </div>
-        </div>"""
-    return items
-
-
-def _portfolio_summary_html() -> str:
-    holdings = pm.get_all_holdings("demo_user")
-    total    = sum(h["quantity"] * h["avg_price"] for h in holdings)
     return f"""
-<div class="port-summary">
-  <div>
-    <div style="font-size:.68rem;color:#94A3B8;font-weight:700;text-transform:uppercase;letter-spacing:.08em">
-      Demo Portfolio — Rahul Sharma
+<div class='fade-page'>
+  <div class='hero'>
+    <div>
+      <h1>{tr(lang, 'hero_title')}</h1>
+      <p>{tr(lang, 'hero_sub')}</p>
+      <p class='kicker'>{tr(lang, 'hero_tag')}</p>
     </div>
-    <div style="font-size:1.8rem;font-weight:800;color:#fff;margin-top:4px">₹{total:,.0f}</div>
-    <div style="font-size:.74rem;color:#94A3B8;margin-top:4px">
-      {len(holdings)} positions &nbsp;·&nbsp; Demo portfolio for showcasing personalized insights
+    <div class='float-area'>
+      {card_1}{card_2}{card_3}
     </div>
   </div>
-  <span style="background:#FEF9C3;border:1px solid #FDE68A;border-radius:20px;
-               padding:4px 12px;font-size:.7rem;font-weight:700;color:#92400E">Demo Mode</span>
-</div>"""
+
+  <div class='section'>
+    <div class='section-title'>{tr(lang, 'problem_solution')}</div>
+    <div class='grid-4'>{problem_html}</div>
+  </div>
+
+  <div class='section' id='how-works-section'>
+    <div class='section-title'>{tr(lang, 'how_it_works')}</div>
+    <div class='flow'>{flow_html}</div>
+  </div>
+
+  <div class='section'>
+    <div class='card' style='text-align:center;background:linear-gradient(130deg,#1f2937,#E11D2E);color:#fff;'>
+      <h3 style='margin:6px 0 12px'>{tr(lang, 'cta')}</h3>
+      <div class='kicker' style='color:#fff'>Live demo with transparent confidence and reasoning.</div>
+    </div>
+  </div>
+</div>
+"""
 
 
-def _portfolio_cards_html() -> str:
+def market_html() -> str:
+    blocks = []
+    for item in MARKET_DATA:
+        clr = "#16A34A" if item["change"] >= 0 else "#DC2626"
+        sign = "+" if item["change"] >= 0 else ""
+        blocks.append(
+            "<div class='card'>"
+            f"<div class='kicker'>{item['index']}</div>"
+            f"<div class='val count' data-count='{int(item['value'])}'>0</div>"
+            f"<div class='kicker' style='color:{clr}'>{sign}{item['change']}%</div>"
+            "</div>"
+        )
+    return "<div class='grid-2'>" + "".join(blocks) + "</div>"
+
+
+def opportunities_html() -> str:
+    blocks = []
+    for item in TOP_PICKS:
+        bcls = "badge-buy" if item["signal"] == "BUY" else "badge-hold"
+        blocks.append(
+            "<div class='card'>"
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<b>{item['stock']}</b><span class='badge {bcls}'>{item['signal']}</span>"
+            "</div>"
+            f"<div class='kicker'>{item['reason']}</div>"
+            f"<div class='kicker' style='margin-top:6px'>Confidence: {item['conf']}%</div>"
+            "</div>"
+        )
+    return "<div class='grid-2'>" + "".join(blocks) + "</div>"
+
+
+def insights_html() -> str:
+    return "".join([f"<div class='card'>{n}</div>" for n in NEWS_ITEMS])
+
+
+def reasoning_html(lang: str) -> str:
+    steps = [
+        ("Extracted data", lucide("<path d='M4 4h16v16H4z'/><path d='M8 8h8M8 12h8M8 16h6'/>"), "Read report content and extracted relevant text."),
+        ("Found metrics", lucide("<path d='M3 3v18h18'/><path d='M7 14l4-4 3 3 5-6'/>"), "Mapped revenue, profit, growth and margin metrics."),
+        ("Analyzed sentiment", lucide("<circle cx='12' cy='12' r='9'/><path d='M8 15s1.5 2 4 2 4-2 4-2'/><circle cx='9' cy='9' r='1'/><circle cx='15' cy='9' r='1'/>"), "Evaluated positive and negative linguistic signals."),
+        ("Checked portfolio", lucide("<path d='M3 7h18v13H3z'/><path d='M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2'/>"), "Matched insights against demo holdings exposure."),
+        ("Generated confidence", lucide("<path d='M12 2l7 4v6c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-4z'/>"), "Computed deterministic confidence from tool outputs."),
+    ]
+    body = "".join(
+        [f"<div class='reason-step'><span class='icon-wrap icon-red'>{icon}</span><div><b>{title}</b><div class='kicker'>{desc}</div></div></div>" for title, icon, desc in steps]
+    )
+    return f"<div class='card'><h4>{tr(lang, 'reason_title')}</h4>{body}</div>"
+
+
+def trace_timeline_html(trace: list[str], lang: str) -> str:
+    if not trace:
+        return reasoning_html(lang)
+    rows = []
+    info_icon = lucide("<circle cx='12' cy='12' r='9'/><path d='M12 8v4'/><path d='M12 16h.01'/>")
+    for i, line in enumerate(trace, 1):
+        pretty = escape(line)
+        rows.append(
+            "<div class='reason-step'>"
+            f"<span class='icon-wrap icon-blue'>{info_icon}</span>"
+            f"<div><b>Step {i}</b><div class='kicker'>{pretty}</div></div>"
+            "</div>"
+        )
+    return f"<div class='card'><h4>{tr(lang, 'trace_title')}</h4>{''.join(rows)}</div>"
+
+
+def portfolio_html(lang: str) -> str:
     holdings = pm.get_all_holdings("demo_user")
-    if not holdings:
-        return '<div class="alert-box">No holdings found. Add your first stock below.</div>'
-    html = ""
+    header = (
+        "<div class='card' style='margin-bottom:10px'>"
+        f"<h4>{tr(lang, 'portfolio')}</h4>"
+        f"<div>{tr(lang, 'demo_user')}</div>"
+        f"<div class='kicker'>{tr(lang, 'demo_note')}</div>"
+        "</div>"
+    )
+    items = []
     for h in holdings:
         value = h["quantity"] * h["avg_price"]
-        html += f"""
-<div class="port-card">
-  <div>
-    <div class="port-stock">{h['stock']}</div>
-    <div class="port-meta">{h['quantity']} shares @ ₹{h['avg_price']:,.2f}</div>
-  </div>
-  <div class="port-val">₹{value:,.0f}</div>
-</div>"""
-    return html
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKEND HANDLERS (logic unchanged)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def handle_analyze(pdf_file, stock_name: str):
-    if pdf_file is None:
-        return '<div class="alert-box">⚠️ Please upload a PDF report first.</div>', "", "", "", "", ""
-    task_data = {
-        "pdf_path":   pdf_file.name,
-        "stock_name": stock_name.strip().upper() if stock_name.strip() else None,
-        "user_id":    "demo_user",
-    }
-    result = agent.receive_task("analyze_document", task_data)
-    if not result.get("success"):
-        warnings = result.get("warnings", ["Analysis failed."])
-        return f'<div class="alert-box">⚠️ {" | ".join(warnings)}</div>', "", "", "", "", ""
-
-    conf_html    = _confidence_card(result.get("confidence") or {})
-    metrics_html = _metric_chips((result.get("metrics") or {}).get("metrics") or result.get("metrics") or {})
-    sent_html    = _sentiment_badge(result.get("sentiment") or {})
-    impact_html  = _portfolio_impact_card(result.get("portfolio_impact") or {})
-    summary_html = ""
-    if result.get("summary"):
-        summary_html = f'<div class="card"><div class="sec-header">AI Summary</div><p style="font-size:.88rem;color:#1E293B;line-height:1.6">{result["summary"]}</p></div>'
-    trace_html = _trace_html(result.get("reasoning_trace") or [])
-    return "", conf_html, metrics_html, sent_html, impact_html + summary_html, trace_html
-
-
-def handle_question(question: str):
-    if not question.strip():
-        return '<div class="alert-box">⚠️ Please enter a question.</div>', "", ""
-    result = agent.receive_task("answer_question", {"question": question.strip(), "user_id": "demo_user"})
-
-    qc  = result.get("question_class") or {}
-    cat = qc.get("category", "general_query").replace("_", " ").title()
-    qc_html = f"""
-<div class="card" style="margin-bottom:12px">
-  <div class="sec-header">Query Classification</div>
-  <span class="badge badge-ai" style="font-size:.8rem;padding:3px 12px">{cat}</span>
-</div>"""
-
-    port = result.get("portfolio") or {}
-    if isinstance(port, dict) and port.get("owns_stock"):
-        port_html = _portfolio_impact_card(port)
-    else:
-        holdings = pm.get_all_holdings("demo_user")
-        rows = "".join(
-            f'<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #F1F5F9">'
-            f'<span style="font-size:.83rem;font-weight:700">{h["stock"]}</span>'
-            f'<span style="font-size:.82rem;color:#64748B">{h["quantity"]} @ ₹{h["avg_price"]:,.0f}</span>'
-            f'<span style="font-size:.83rem;font-weight:700">₹{h["quantity"]*h["avg_price"]:,.0f}</span></div>'
-            for h in holdings
+        items.append(
+            "<div class='card'>"
+            f"<div style='display:flex;justify-content:space-between'><b>{h['stock']}</b><b>Rs. {value:,.0f}</b></div>"
+            f"<div class='kicker'>{h['quantity']} shares @ Rs. {h['avg_price']:,.2f}</div>"
+            "</div>"
         )
-        port_html = f'<div class="card"><div class="sec-header">Demo Portfolio — Rahul Sharma</div><p style="font-size:.72rem;color:#94A3B8;margin:0 0 8px">Demo portfolio for showcasing personalized insights</p>{rows}</div>'
-
-    conf_html  = _confidence_card(result.get("confidence") or {})
-    trace_html = _trace_html(result.get("reasoning_trace") or [])
-    return qc_html + port_html, conf_html, trace_html
+    return header + "".join(items)
 
 
-def handle_add_stock(stock: str, qty: str, price: str):
+def deterministic_summary(metrics: dict, sentiment: dict) -> str:
+    m = (metrics or {}).get("metrics") or metrics or {}
+    label = (sentiment or {}).get("sentiment", "neutral")
+    rev = m.get("revenue", "N/A")
+    profit = m.get("profit", "N/A")
+    return (
+        f"Fast-mode summary: sentiment is {label}. "
+        f"Revenue is {rev} and net profit is {profit}, based on deterministic checks."
+    )
+
+
+def handle_analyze(pdf_file, stock_name: str, ai_mode: bool, lang: str):
+    try:
+        if pdf_file is None:
+            return "<div class='card'>Please upload a PDF report first.</div>", "", "", "", "", reasoning_html(lang)
+
+        result = agent.receive_task(
+            "analyze_document",
+            {
+                "pdf_path": pdf_file.name,
+                "stock_name": stock_name.strip().upper() if stock_name else None,
+                "user_id": "demo_user",
+                "ai_mode": bool(ai_mode),
+            },
+        )
+
+        if not result.get("success"):
+            warnings = " | ".join(result.get("warnings", ["Analysis failed."]))
+            trace_html = trace_timeline_html(result.get("reasoning_trace") or [], lang)
+            return f"<div class='card'>{warnings}</div>", "", "", "", "", trace_html
+
+        conf_pct = int((result.get("confidence") or {}).get("percentage", 0))
+        conf_html = (
+            "<div class='card'>"
+            "<h4>Confidence</h4>"
+            f"<div class='val count' data-count='{conf_pct}'>0</div><div class='kicker'>%</div>"
+            "</div>"
+        )
+
+        metrics = (result.get("metrics") or {}).get("metrics") or result.get("metrics") or {}
+        metrics_rows = "".join([f"<div class='kicker'><b>{k.title()}</b>: {v}</div>" for k, v in metrics.items()])
+        metrics_html = f"<div class='card'><h4>Metrics</h4>{metrics_rows}</div>"
+
+        sentiment = result.get("sentiment") or {}
+        sentiment_html = (
+            "<div class='card'>"
+            "<h4>Sentiment</h4>"
+            f"<div class='kicker'>{sentiment.get('sentiment', 'neutral')} ({sentiment.get('score', 0):.2f})</div>"
+            "</div>"
+        )
+
+        impact = result.get("portfolio_impact") or {}
+        mode_text = tr(lang, "ai_enabled") if ai_mode else tr(lang, "ai_disabled")
+        summary = result.get("summary") if ai_mode and result.get("summary") else deterministic_summary(metrics, sentiment)
+        impact_html = (
+            "<div class='card'>"
+            "<h4>Portfolio Impact</h4>"
+            f"<div class='kicker'>{impact.get('note', 'No impact details available.')}</div>"
+            f"<div class='kicker' style='margin-top:8px'><b>{mode_text}</b></div>"
+            f"<div class='kicker' style='margin-top:8px'>{summary}</div>"
+            "</div>"
+        )
+
+        trace_html = trace_timeline_html(result.get("reasoning_trace") or [], lang)
+        return "", conf_html, metrics_html, sentiment_html, impact_html, trace_html
+    except Exception as exc:
+        return f"<div class='card'>Something went wrong: {exc}</div>", "", "", "", "", reasoning_html(lang)
+
+
+def handle_question(question: str, lang: str):
+    try:
+        if not question.strip():
+            return "<div class='card'>Please enter a question.</div>", "", reasoning_html(lang)
+
+        result = agent.receive_task("answer_question", {"question": question.strip(), "user_id": "demo_user"})
+        cat = (result.get("question_class") or {}).get("category", "general_query").replace("_", " ").title()
+        conf = int((result.get("confidence") or {}).get("percentage", 0))
+        main_html = f"<div class='card'><h4>Query Category</h4><div class='kicker'>{cat}</div></div>"
+        conf_html = f"<div class='card'><h4>Confidence</h4><div class='val count' data-count='{conf}'>0</div><div class='kicker'>%</div></div>"
+        trace_html = trace_timeline_html(result.get("reasoning_trace") or [], lang)
+        return main_html, conf_html, trace_html
+    except Exception as exc:
+        return f"<div class='card'>Question failed: {exc}</div>", "", reasoning_html(lang)
+
+
+def handle_add_stock(stock: str, qty: str, price: str, lang: str):
     try:
         if not stock.strip():
-            return '<div class="alert-box">⚠️ Stock ticker is required.</div>', _portfolio_cards_html()
+            return "<div class='card'>Ticker is required.</div>", portfolio_html(lang)
         pm.add_holding("demo_user", stock.strip().upper(), int(qty), float(price))
-        return (
-            f'<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:12px;'
-            f'padding:11px 16px;color:#15803D;font-size:.86rem">'
-            f'✅ {stock.upper()} added to Demo Portfolio.</div>',
-            _portfolio_cards_html()
-        )
-    except Exception as e:
-        return f'<div class="alert-box">⚠️ {e}</div>', _portfolio_cards_html()
+        return "<div class='card'>Position updated successfully.</div>", portfolio_html(lang)
+    except Exception as exc:
+        return f"<div class='card'>Unable to update position: {exc}</div>", portfolio_html(lang)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GRADIO LAYOUT
-# ─────────────────────────────────────────────────────────────────────────────
+def toggle_pages(to_dashboard: bool):
+    if to_dashboard:
+        return gr.update(visible=False), gr.update(visible=True)
+    return gr.update(visible=True), gr.update(visible=False)
+
+
+def on_lang_change(lang_choice: str):
+    lang = "hi" if lang_choice == "Hindi" else "en"
+    return (
+        lang,
+        topbar_html(lang),
+        landing_html(lang),
+        portfolio_html(lang),
+        reasoning_html(lang),
+        gr.update(placeholder=tr(lang, "ask_placeholder")),
+        gr.update(value=tr(lang, "start_demo")),
+        gr.update(value=tr(lang, "view_how")),
+        gr.update(value=tr(lang, "back_home")),
+        gr.update(value=tr(lang, "analyze")),
+        gr.update(value=tr(lang, "ask")),
+        gr.update(value=tr(lang, "add_position")),
+        gr.update(label=tr(lang, "ai_label")),
+    )
+
+
+def ai_status_html(ai_mode: bool, lang: str) -> str:
+    status = tr(lang, "ai_enabled") if ai_mode else tr(lang, "ai_disabled")
+    bg = "#dcfce7" if ai_mode else "#fef3c7"
+    color = "#166534" if ai_mode else "#92400e"
+    return f"<div class='card' style='padding:10px 12px;background:{bg};color:{color}'><b>{status}</b></div>"
+
+
+def focus_how_section(lang: str):
+    html = landing_html(lang).replace("id='how-works-section'", "id='how-works-section' class='how-focus'")
+    html += """
+<script>
+setTimeout(function(){
+  const el = document.getElementById('how-works-section');
+  if(el){ el.scrollIntoView({behavior:'smooth', block:'center'}); }
+}, 80);
+</script>
+"""
+    return html
+
+
+def ai_status_from_lang_choice(ai_mode: bool, lang_choice: str) -> str:
+    lang = "hi" if lang_choice == "Hindi" else "en"
+    return ai_status_html(ai_mode, lang)
+
 
 def launch_app(port: int = 7860, share: bool = False):
-    with gr.Blocks(
-        css=CSS,
-        title="InvestorCoPilot AI",
-        theme=gr.themes.Soft(
-            primary_hue=gr.themes.colors.red,
-            neutral_hue=gr.themes.colors.slate,
-            font=gr.themes.GoogleFont("Inter"),
-        ),
-    ) as demo:
+    with gr.Blocks(css=CSS, title="InvestorCoPilot AI") as demo:
+        lang_state = gr.State("en")
 
-        # ── Site nav (always visible) ─────────────────────────────────────────
-        gr.HTML(_sitenav_html())
+        with gr.Row(elem_classes=["control-strip"]):
+            with gr.Column(scale=2):
+                gr.HTML(f"<div class='control-label'>{tr('en', 'lang')}</div>")
+                lang_toggle = gr.Radio(["English", "Hindi"], value="English", label="", show_label=False)
+            with gr.Column(scale=3):
+                gr.HTML(f"<div class='control-label'>{tr('en', 'ai_label')}</div>")
+                ai_mode = gr.Checkbox(value=True, label="", show_label=False)
+            generate_demo_pdf()
+            with gr.Column(scale=4):
+                demo_ready = gr.HTML("<div class='card' style='padding:10px 12px'><div class='kicker'><b>Demo report ready</b> - You can upload it in Analyze tab.</div></div>")
+            with gr.Column(scale=3):
+                ai_status = gr.HTML(ai_status_html(True, "en"))
 
-        # ── LANDING PAGE ──────────────────────────────────────────────────────
-        with gr.Group(elem_id="page-landing", elem_classes="page active"):
-            gr.HTML(_full_landing_html())
+        topbar = gr.HTML(topbar_html("en"))
 
-        # ── DASHBOARD ─────────────────────────────────────────────────────────
-        with gr.Group(elem_id="page-dashboard", elem_classes="page"):
-            gr.HTML(_dash_topbar_html())
+        with gr.Group(visible=True, elem_classes=["fade-page"]) as landing_page:
+            landing_block = gr.HTML(landing_html("en"))
+            with gr.Row():
+                start_demo_btn = gr.Button(tr("en", "start_demo"), elem_classes=["btn-light-cta"])
+                how_btn = gr.Button(tr("en", "view_how"), elem_classes=["btn-secondary"], elem_id="view-how-btn")
 
-            with gr.Tabs(elem_classes="tab-nav"):
+        with gr.Group(visible=False, elem_classes=["fade-page"]) as dashboard_page:
+            with gr.Column(elem_classes=["dash-shell"]):
+                with gr.Row():
+                    back_btn = gr.Button(tr("en", "back_home"), elem_classes=["btn-secondary"])
+                    quick_chip = gr.Button("Live Demo", elem_classes=["btn-chip"])
 
-                # 📊 Markets
-                with gr.TabItem("📊 Markets"):
-                    gr.HTML(_markets_tab_html())
+                gr.HTML(f"<div class='dash-title'>{tr('en', 'dashboard')}</div><div class='dash-sub'>Actionable market intelligence with explainable confidence.</div>")
+                gr.HTML(f"<div class='section'><h3>{tr('en', 'market_cards')}</h3></div>")
+                gr.HTML(market_html())
 
-                # 📄 Analyze
-                with gr.TabItem("📄 Analyze"):
-                    with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.HTML('<div class="sec-header">Upload Report</div>')
-                            pdf_input   = gr.File(label="PDF Report", file_types=[".pdf"])
-                            stock_input = gr.Textbox(label="Stock Ticker (optional)", placeholder="e.g. TCS")
-                            analyze_btn = gr.Button("🔍 Analyze Report", elem_classes="btn-primary")
-                        with gr.Column(scale=2):
-                            analyze_err     = gr.HTML()
-                            analyze_conf    = gr.HTML()
-                            analyze_metrics = gr.HTML()
-                            analyze_sent    = gr.HTML()
-                            analyze_impact  = gr.HTML()
+                gr.HTML(f"<div class='section'><h3>{tr('en', 'opportunities')}</h3></div>")
+                gr.HTML(opportunities_html())
 
-                    with gr.Accordion("💡 How this insight was generated", open=False):
-                        analyze_trace = gr.HTML()
+                gr.HTML(f"<div class='section'><h3>{tr('en', 'insights')}</h3></div>")
+                gr.HTML(insights_html())
 
-                    analyze_btn.click(
-                        fn=handle_analyze,
-                        inputs=[pdf_input, stock_input],
-                        outputs=[analyze_err, analyze_conf, analyze_metrics,
-                                 analyze_sent, analyze_impact, analyze_trace],
-                    )
+                with gr.Tabs():
+                    with gr.TabItem(tr("en", "analyze")):
+                        with gr.Group(elem_classes=["analysis-grid"]):
+                            with gr.Column(elem_classes=["input-panel"]):
+                                gr.HTML("<div class='kicker'><b>Upload and analyze</b></div>")
+                                pdf_input = gr.File(label="PDF Report", file_types=[".pdf"])
+                                stock_input = gr.Textbox(label="Stock Ticker (optional)", placeholder="e.g. TCS")
+                                analyze_btn = gr.Button(tr("en", "analyze"), elem_classes=["btn-primary"])
+                            with gr.Column(elem_classes=["output-grid"]):
+                                analyze_err = gr.HTML()
+                                analyze_conf = gr.HTML()
+                                analyze_metrics = gr.HTML()
+                                analyze_sent = gr.HTML()
+                                analyze_impact = gr.HTML()
+                        reason_block = gr.HTML(reasoning_html("en"))
 
-                # 💬 Insights
-                with gr.TabItem("💬 Insights"):
-                    gr.HTML('<div class="sec-header">Ask About a Stock or Market</div>')
-                    with gr.Row():
-                        q_input = gr.Textbox(
-                            placeholder="e.g. What is the impact on my TCS holding?",
-                            label="", lines=2, scale=4,
-                        )
-                        q_btn = gr.Button("Ask", elem_classes="btn-primary", scale=1)
+                    with gr.TabItem(tr("en", "insights")):
+                        question_input = gr.Textbox(placeholder=tr("en", "ask_placeholder"), label="")
+                        ask_btn = gr.Button(tr("en", "ask"), elem_classes=["btn-primary"])
+                        insight_main = gr.HTML()
+                        insight_conf = gr.HTML()
+                        insight_reason = gr.HTML(reasoning_html("en"))
 
-                    insights_main  = gr.HTML()
-                    insights_conf  = gr.HTML()
+                    with gr.TabItem(tr("en", "portfolio")):
+                        portfolio_block = gr.HTML(portfolio_html("en"))
+                        with gr.Row():
+                            add_stock = gr.Textbox(label="Ticker", placeholder="TCS")
+                            add_qty = gr.Textbox(label="Quantity", placeholder="10")
+                            add_price = gr.Textbox(label="Avg Price", placeholder="3500")
+                        add_btn = gr.Button(tr("en", "add_position"), elem_classes=["btn-primary"])
+                        add_msg = gr.HTML()
 
-                    with gr.Accordion("💡 How this insight was generated", open=False):
-                        insights_trace = gr.HTML()
+        def refresh_landing(lang: str):
+            return landing_html(lang)
 
-                    q_btn.click(
-                        fn=handle_question,
-                        inputs=[q_input],
-                        outputs=[insights_main, insights_conf, insights_trace],
-                    )
+        def noop_btn():
+            return gr.update()
 
-                # 📁 Portfolio
-                with gr.TabItem("📁 Portfolio"):
-                    gr.HTML(_portfolio_summary_html())
-                    portfolio_display = gr.HTML(_portfolio_cards_html())
+        how_btn.click(fn=refresh_landing, inputs=[lang_state], outputs=[landing_block])
+        start_demo_btn.click(lambda: toggle_pages(True), outputs=[landing_page, dashboard_page])
+        back_btn.click(lambda: toggle_pages(False), outputs=[landing_page, dashboard_page])
+        quick_chip.click(noop_btn, outputs=[quick_chip])
+        ai_mode.change(fn=ai_status_html, inputs=[ai_mode, lang_state], outputs=[ai_status])
 
-                    gr.HTML('<div class="sec-header" style="margin-top:20px">Add / Update Position</div>')
-                    with gr.Row():
-                        add_stock = gr.Textbox(label="Ticker",        placeholder="TCS",  scale=2)
-                        add_qty   = gr.Textbox(label="Quantity",      placeholder="50",   scale=1)
-                        add_price = gr.Textbox(label="Avg Price (₹)", placeholder="3850", scale=1)
-                        add_btn   = gr.Button("Add", elem_classes="btn-primary", scale=1)
+        analyze_btn.click(
+            fn=handle_analyze,
+            inputs=[pdf_input, stock_input, ai_mode, lang_state],
+            outputs=[analyze_err, analyze_conf, analyze_metrics, analyze_sent, analyze_impact, reason_block],
+        )
 
-                    add_msg = gr.HTML()
-                    add_btn.click(
-                        fn=handle_add_stock,
-                        inputs=[add_stock, add_qty, add_price],
-                        outputs=[add_msg, portfolio_display],
-                    )
+        ask_btn.click(
+            fn=handle_question,
+            inputs=[question_input, lang_state],
+            outputs=[insight_main, insight_conf, insight_reason],
+        )
+
+        add_btn.click(
+            fn=handle_add_stock,
+            inputs=[add_stock, add_qty, add_price, lang_state],
+            outputs=[add_msg, portfolio_block],
+        )
+
+        lang_toggle.change(
+            fn=on_lang_change,
+            inputs=[lang_toggle],
+            outputs=[
+                lang_state,
+                topbar,
+                landing_block,
+                portfolio_block,
+                reason_block,
+                question_input,
+                start_demo_btn,
+                how_btn,
+                back_btn,
+                analyze_btn,
+                ask_btn,
+                add_btn,
+                ai_mode,
+            ],
+        )
+        lang_toggle.change(fn=ai_status_from_lang_choice, inputs=[ai_mode, lang_toggle], outputs=[ai_status])
+
+        gr.HTML(
+            """
+<script>
+(function(){
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest('#view-how-btn');
+    if(!btn) return;
+    const el = document.getElementById('how-works-section');
+    if(el){
+      el.classList.add('how-focus');
+      el.scrollIntoView({behavior:'smooth', block:'center'});
+      setTimeout(function(){ el.classList.remove('how-focus'); }, 1400);
+    }
+  });
+  function animateCounts(){
+    document.querySelectorAll('.count[data-count]').forEach(function(el){
+      const target = parseInt(el.getAttribute('data-count') || '0', 10);
+      const duration = 650;
+      const t0 = performance.now();
+      function tick(t){
+        const p = Math.min((t - t0)/duration, 1);
+        el.textContent = Math.floor(target * p).toLocaleString();
+        if(p < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+  const observer = new MutationObserver(animateCounts);
+  observer.observe(document.body, { childList: true, subtree: true });
+  setTimeout(animateCounts, 200);
+})();
+</script>
+"""
+        )
 
     demo.launch(server_port=port, share=share)
 

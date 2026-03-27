@@ -107,7 +107,7 @@ class InvestorAgent:
             }
         """
         if task_type == TASK_ANALYZE_DOCUMENT:
-            return [
+            plan = [
                 {
                     "name": "document_processor",
                     "fn": self.document_processor.execute,
@@ -149,6 +149,9 @@ class InvestorAgent:
                     "optional": True,
                 },
             ]
+            if task_data.get("ai_mode") is False:
+                plan = [step for step in plan if step["name"] != "ai_enhancer"]
+            return plan
 
         if task_type == TASK_ANSWER_QUESTION:
             return [
