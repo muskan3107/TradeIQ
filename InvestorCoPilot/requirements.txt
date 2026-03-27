@@ -1,0 +1,6 @@
+gradio
+pdfplumber
+beautifulsoup4
+requests
+matplotlib
+plotly
