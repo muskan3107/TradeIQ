@@ -1,4 +1,4 @@
-# InvestorCoPilot
+# TradeIQ
 
 An AI-powered investment research assistant built for hackathon. It processes financial documents, extracts key metrics, analyzes sentiment, and manages portfolio data — all through a conversational agent interface.
 
@@ -14,7 +14,7 @@ An AI-powered investment research assistant built for hackathon. It processes fi
 ## Project Structure
 
 ```
-InvestorCoPilot/
+TradeIQ/
 ├── agent/          # Core agent logic and task planning
 ├── tools/          # Individual tool modules
 ├── backend/        # Confidence engine, formatter, validator
@@ -29,7 +29,7 @@ InvestorCoPilot/
 
 1. Clone the repo and navigate into the project:
    ```bash
-   cd InvestorCoPilot
+   cd TradeIQ
    ```
 
 2. Create and activate a virtual environment:

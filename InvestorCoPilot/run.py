@@ -1,5 +1,5 @@
 """
-run.py — InvestorCoPilot AI  |  Main entry point
+run.py — TradeIQ  |  Main entry point
 
 Usage:
     python run.py              # normal launch
@@ -110,7 +110,7 @@ def _check_dependencies() -> dict:
 def _print_banner(port: int, share: bool, dep_status: dict, no_ai: bool) -> None:
     line = "─" * 54
     print(f"\n{line}")
-    print("  InvestorCoPilot AI  |  Fintech Research Assistant")
+    print("  TradeIQ  |  Fintech Research Assistant")
     print(line)
     print(f"  URL      : http://127.0.0.1:{port}")
     if share:
@@ -130,7 +130,7 @@ def _print_banner(port: int, share: bool, dep_status: dict, no_ai: bool) -> None
 
 def _register_shutdown() -> None:
     def _handler(sig, frame):
-        print("\n\nShutting down InvestorCoPilot AI... bye 👋")
+        print("\n\nShutting down TradeIQ... bye 👋")
         sys.exit(0)
     signal.signal(signal.SIGINT,  _handler)
     signal.signal(signal.SIGTERM, _handler)
@@ -140,7 +140,7 @@ def _register_shutdown() -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="InvestorCoPilot AI — Fintech Research Assistant",
+        description="TradeIQ — Fintech Research Assistant",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--port",   type=int, default=7860,
@@ -161,7 +161,7 @@ def main() -> None:
     _setup_logging(args.debug)
     _register_shutdown()
 
-    logger.info("Starting InvestorCoPilot AI...")
+    logger.info("Starting TradeIQ...")
 
     # 1. Filesystem
     _ensure_directories()
