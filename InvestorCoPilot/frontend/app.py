@@ -7,12 +7,14 @@ import os
 import sys
 from pathlib import Path
 from html import escape
+from typing import Any, Optional
 
 import gradio as gr
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent.agent_core import InvestorAgent
+from tools.market_news import fetch_market_news
 from tools.portfolio_manager import PortfolioManager
 
 
@@ -55,6 +57,13 @@ I18N = {
         "back_home": "Back to Landing",
         "lang": "Language",
         "trace_title": "Agent Thought Process Flow",
+        "top_news": "TOP NEWS",
+        "refresh_news": "Refresh news",
+        "live_strip": "LIVE",
+        "market_pulse": "Market pulse",
+        "breadth": "Advance / Decline (demo)",
+        "signal_mix": "Signal mix (demo picks)",
+        "how_blurb": "Each step below mirrors what the agent runs in order — upload a PDF in the demo to see the live trace.",
     },
     "hi": {
         "app_name": "इन्वेस्टरकोपायलट एआई",
@@ -84,6 +93,13 @@ I18N = {
         "back_home": "लैंडिंग पर वापस",
         "lang": "भाषा",
         "trace_title": "एजेंट विचार प्रक्रिया प्रवाह",
+        "top_news": "टॉप न्यूज़",
+        "refresh_news": "न्यूज़ रिफ्रेश",
+        "live_strip": "लाइव",
+        "market_pulse": "मार्केट पल्स",
+        "breadth": "एडवांस / डिक्लाइन (डेमो)",
+        "signal_mix": "सिग्नल मिक्स (डेमो पिक्स)",
+        "how_blurb": "नीचे के चरण एजेंट के क्रम को दर्शाते हैं — लाइव ट्रेस के लिए डेमो में PDF अपलोड करें।",
     },
 }
 
@@ -99,12 +115,6 @@ TOP_PICKS = [
     {"stock": "INFOSYS", "signal": "BUY", "conf": 81, "reason": "Healthy deal pipeline"},
     {"stock": "RELIANCE", "signal": "HOLD", "conf": 72, "reason": "Balanced risk-reward"},
     {"stock": "HDFCBANK", "signal": "HOLD", "conf": 68, "reason": "Watch margin pressure"},
-]
-
-NEWS_ITEMS = [
-    "TCS shows resilient growth with enterprise demand stability.",
-    "RBI status quo supports near-term banking sector sentiment.",
-    "IT basket sees improved confidence after guidance commentary.",
 ]
 
 CSS = """
@@ -407,9 +417,214 @@ footer { display: none !important; }
   box-shadow: 0 8px 18px rgba(225, 29, 46, .28) !important;
 }
 .how-focus {
-  outline: 2px solid #fb7185;
-  box-shadow: 0 0 0 6px rgba(225, 29, 46, .12);
+  outline: 3px solid #E11D2E !important;
+  box-shadow: 0 0 0 8px rgba(225, 29, 46, .18) !important;
+  border-radius: 14px;
   transition: all .25s ease;
+}
+
+/* ET-style app strip */
+.et-app-bar {
+  background: #E11D2E;
+  color: #fff;
+  border-radius: 14px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  box-shadow: 0 10px 28px rgba(225, 29, 46, .35);
+}
+.et-app-bar .et-title {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.et-app-bar .et-sub {
+  font-size: .72rem;
+  opacity: .9;
+  font-weight: 600;
+}
+.live-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.live-dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .35; transform: scale(.85); }
+}
+
+/* News carousel */
+.news-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 8px 0 10px;
+}
+.news-section-head .big {
+  font-size: 1.05rem;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: .04em;
+}
+.news-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x mandatory;
+}
+.news-card {
+  min-width: 280px;
+  max-width: 320px;
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  background: #fff;
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid #fecdd3;
+  box-shadow: 0 8px 22px rgba(225, 29, 46, .08);
+}
+.news-card .live-tag {
+  display: inline-block;
+  font-size: .62rem;
+  font-weight: 800;
+  color: #E11D2E;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.news-card .headline {
+  font-size: .95rem;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.35;
+  margin: 0 0 8px;
+}
+.news-card .src {
+  font-size: .68rem;
+  color: #64748b;
+  font-weight: 600;
+}
+.news-card a {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #E11D2E;
+  text-decoration: none;
+}
+
+/* Index row + sparkline */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.index-card {
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #fecdd3;
+  padding: 10px 12px;
+  box-shadow: 0 6px 18px rgba(225, 29, 46, .07);
+}
+.index-card .nm {
+  font-size: .68rem;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.index-card .pv {
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: #0f172a;
+  margin: 2px 0;
+}
+.index-card .ch {
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+.pick-rich {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 12px;
+  align-items: stretch;
+}
+.pick-rich .main {
+  min-width: 0;
+}
+.pick-rich .side {
+  background: linear-gradient(180deg, #ecfeff, #f0f9ff);
+  border-radius: 10px;
+  padding: 8px 10px;
+  border: 1px solid #bae6fd;
+  text-align: center;
+}
+.pick-rich .side .lbl {
+  font-size: .62rem;
+  color: #0369a1;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.pick-rich .side .big {
+  font-size: 1.15rem;
+  font-weight: 900;
+  color: #0f172a;
+}
+.sentiment-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.sentiment-bar .seg-sell { background: #E11D2E; }
+.sentiment-bar .seg-hold { background: #fbbf24; }
+.sentiment-bar .seg-buy { background: #16a34a; }
+
+.breadth-wrap {
+  margin-top: 12px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fecdd3;
+}
+.breadth-wrap .lbl {
+  font-size: .72rem;
+  font-weight: 800;
+  color: #475569;
+  margin-bottom: 6px;
+}
+.breadth-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.breadth-bar .adv { background: #16a34a; }
+.breadth-bar .dec { background: #E11D2E; }
+.breadth-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: .68rem;
+  color: #64748b;
+  margin-top: 4px;
+  font-weight: 600;
 }
 
 .analysis-grid {
@@ -441,9 +656,11 @@ footer { display: none !important; }
   .grid-4 { grid-template-columns: repeat(2, 1fr); }
   .flow { grid-template-columns: repeat(2, 1fr); }
   .analysis-grid { grid-template-columns: 1fr; }
+  .index-grid { grid-template-columns: repeat(2, 1fr); }
+  .pick-rich { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
-  .grid-4, .grid-2, .flow { grid-template-columns: 1fr; }
+  .grid-4, .grid-2, .flow, .index-grid { grid-template-columns: 1fr; }
   .float-area { min-height: 0; }
   .float-card {
     position: relative;
@@ -471,6 +688,136 @@ def lucide(path_data: str) -> str:
         "stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
         f"{path_data}</svg>"
     )
+
+
+HOW_SCROLL_JS = r"""
+() => {
+  const run = () => {
+    const el = document.getElementById("how-works-section");
+    if (!el) return;
+    el.scrollIntoView({behavior: "smooth", block: "center"});
+    el.classList.add("how-focus");
+    window.setTimeout(() => el.classList.remove("how-focus"), 2200);
+  };
+  run();
+  window.setTimeout(run, 350);
+  window.setTimeout(run, 800);
+}
+"""
+
+
+def sparkline_svg(positive: bool) -> str:
+    if positive:
+        path_d = "M0,78 L12,72 L24,68 L40,52 L52,44 L68,32 L82,24 L100,14"
+    else:
+        path_d = "M0,18 L14,28 L28,36 L44,48 L58,58 L72,66 L86,72 L100,78"
+    stroke = "#16A34A" if positive else "#E11D2E"
+    return (
+        f"<svg viewBox='0 0 100 88' width='100%' height='72' preserveAspectRatio='none' style='display:block'>"
+        f"<defs><linearGradient id='sg' x1='0' y1='0' x2='0' y2='1'>"
+        f"<stop offset='0%' stop-color='{stroke}' stop-opacity='0.35'/>"
+        f"<stop offset='100%' stop-color='{stroke}' stop-opacity='0'/></linearGradient></defs>"
+        f"<path d='{path_d} V88 H0 Z' fill='url(#sg)'/>"
+        f"<path d='{path_d}' fill='none' stroke='{stroke}' stroke-width='2.2'/></svg>"
+    )
+
+
+def _breadth_from_market() -> tuple[int, int]:
+    ups = sum(1 for m in MARKET_DATA if m["change"] >= 0)
+    downs = len(MARKET_DATA) - ups
+    adv = max(35, min(75, 50 + ups * 8 - downs * 5))
+    return adv, 100 - adv
+
+
+def markets_dashboard_html(lang: str) -> str:
+    adv, dec = _breadth_from_market()
+    cards = []
+    for item in MARKET_DATA:
+        up = item["change"] >= 0
+        clr = "#16A34A" if up else "#E11D2E"
+        sign = "+" if up else ""
+        cards.append(
+            "<div class='index-card'>"
+            f"<div class='nm'>{escape(item['index'])}</div>"
+            f"<div class='pv count' data-count='{int(item['value'])}'>0</div>"
+            f"<div class='ch' style='color:{clr}'>{sign}{item['change']}%</div>"
+            f"{sparkline_svg(up)}"
+            "</div>"
+        )
+    return (
+        "<div>"
+        f"<div class='et-app-bar'><div><div class='et-title'>{escape(tr(lang, 'market_pulse'))}</div>"
+        f"<div class='et-sub'>{escape(tr(lang, 'demo_note'))}</div></div>"
+        f"<div class='live-dot'>{escape(tr(lang, 'live_strip'))}</div></div>"
+        f"<div class='index-grid'>{''.join(cards)}</div>"
+        "<div class='breadth-wrap'>"
+        f"<div class='lbl'>{escape(tr(lang, 'breadth'))}</div>"
+        "<div class='breadth-bar'>"
+        f"<div class='adv' style='width:{adv}%'></div>"
+        f"<div class='dec' style='width:{dec}%'></div>"
+        "</div>"
+        f"<div class='breadth-meta'><span>Adv {adv}%</span><span>Decl {dec}%</span></div>"
+        "</div>"
+        "</div>"
+    )
+
+
+def news_carousel_html(lang: str, items: Optional[list[Any]] = None) -> str:
+    rows = items if items is not None else fetch_market_news(12)
+    cards = []
+    for row in rows:
+        title = escape(row.get("title", ""))
+        src = escape(str(row.get("source", "")))
+        link = escape(str(row.get("link", "#")))
+        cards.append(
+            "<div class='news-card'>"
+            f"<span class='live-tag'>{escape(tr(lang, 'live_strip'))} · MARKET</span>"
+            f"<p class='headline'>{title}</p>"
+            f"<div class='src'>{src}</div>"
+            f"<div style='margin-top:6px'><a href='{link}' target='_blank' rel='noopener noreferrer'>Read →</a></div>"
+            "</div>"
+        )
+    inner = "".join(cards) if cards else "<div class='news-card'><p class='headline'>No headlines available.</p></div>"
+    return (
+        "<div>"
+        f"<div class='news-section-head'><span class='big'>{escape(tr(lang, 'top_news'))}</span></div>"
+        f"<div class='news-scroll'>{inner}</div>"
+        "</div>"
+    )
+
+
+def opportunities_rich_html(lang: str) -> str:
+    blocks = []
+    buys = sum(1 for p in TOP_PICKS if p["signal"] == "BUY")
+    holds = len(TOP_PICKS) - buys
+    for item in TOP_PICKS:
+        up = item["signal"] == "BUY"
+        bcls = "badge-buy" if up else "badge-hold"
+        upside = min(4.5, item["conf"] / 22.0)
+        blocks.append(
+            "<div class='card pick-rich'>"
+            "<div class='main'>"
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span style='font-size:1.1rem;font-weight:900'>{escape(item['stock'])}</span>"
+            f"<span class='badge {bcls}'>{escape(item['signal'])}</span>"
+            "</div>"
+            f"<div class='kicker' style='margin-top:6px;font-size:.8rem'>{escape(item['reason'])}</div>"
+            "<div class='sentiment-bar' style='display:flex;height:8px'>"
+            f"<span class='seg-sell' style='flex:{max(1, 4 - buys)}'></span>"
+            f"<span class='seg-hold' style='flex:{max(1, holds * 2)}'></span>"
+            f"<span class='seg-buy' style='flex:{max(1, buys * 3)}'></span>"
+            "</div>"
+            f"<div class='kicker' style='margin-top:4px'>{escape(tr(lang, 'signal_mix'))}</div>"
+            "</div>"
+            "<div class='side'>"
+            "<div class='lbl'>Conf</div>"
+            f"<div class='big'>{item['conf']}%</div>"
+            "<div class='lbl' style='margin-top:6px'>Upside</div>"
+            f"<div class='big' style='color:#16a34a'>+{upside:.1f}%</div>"
+            "</div>"
+            "</div>"
+        )
+    return "<div class='grid-2'>" + "".join(blocks) + "</div>"
 
 
 def generate_demo_pdf() -> str:
@@ -591,7 +938,8 @@ def landing_html(lang: str) -> str:
   </div>
 
   <div class='section' id='how-works-section'>
-    <div class='section-title'>{tr(lang, 'how_it_works')}</div>
+    <div class='section-title' style='font-size:1.55rem;font-weight:900;color:#0f172a'>{tr(lang, 'how_it_works')}</div>
+    <p style='font-size:.9rem;color:#475569;margin:0 0 14px;line-height:1.55;max-width:52rem'>{tr(lang, 'how_blurb')}</p>
     <div class='flow'>{flow_html}</div>
   </div>
 
@@ -603,41 +951,6 @@ def landing_html(lang: str) -> str:
   </div>
 </div>
 """
-
-
-def market_html() -> str:
-    blocks = []
-    for item in MARKET_DATA:
-        clr = "#16A34A" if item["change"] >= 0 else "#DC2626"
-        sign = "+" if item["change"] >= 0 else ""
-        blocks.append(
-            "<div class='card'>"
-            f"<div class='kicker'>{item['index']}</div>"
-            f"<div class='val count' data-count='{int(item['value'])}'>0</div>"
-            f"<div class='kicker' style='color:{clr}'>{sign}{item['change']}%</div>"
-            "</div>"
-        )
-    return "<div class='grid-2'>" + "".join(blocks) + "</div>"
-
-
-def opportunities_html() -> str:
-    blocks = []
-    for item in TOP_PICKS:
-        bcls = "badge-buy" if item["signal"] == "BUY" else "badge-hold"
-        blocks.append(
-            "<div class='card'>"
-            "<div style='display:flex;justify-content:space-between;align-items:center'>"
-            f"<b>{item['stock']}</b><span class='badge {bcls}'>{item['signal']}</span>"
-            "</div>"
-            f"<div class='kicker'>{item['reason']}</div>"
-            f"<div class='kicker' style='margin-top:6px'>Confidence: {item['conf']}%</div>"
-            "</div>"
-        )
-    return "<div class='grid-2'>" + "".join(blocks) + "</div>"
-
-
-def insights_html() -> str:
-    return "".join([f"<div class='card'>{n}</div>" for n in NEWS_ITEMS])
 
 
 def reasoning_html(lang: str) -> str:
@@ -798,7 +1111,11 @@ def on_lang_change(lang_choice: str):
         lang,
         topbar_html(lang),
         landing_html(lang),
+        markets_dashboard_html(lang),
+        opportunities_rich_html(lang),
+        news_carousel_html(lang),
         portfolio_html(lang),
+        reasoning_html(lang),
         reasoning_html(lang),
         gr.update(placeholder=tr(lang, "ask_placeholder")),
         gr.update(value=tr(lang, "start_demo")),
@@ -807,6 +1124,7 @@ def on_lang_change(lang_choice: str):
         gr.update(value=tr(lang, "analyze")),
         gr.update(value=tr(lang, "ask")),
         gr.update(value=tr(lang, "add_position")),
+        gr.update(value=tr(lang, "refresh_news")),
         gr.update(label=tr(lang, "ai_label")),
     )
 
@@ -816,19 +1134,6 @@ def ai_status_html(ai_mode: bool, lang: str) -> str:
     bg = "#dcfce7" if ai_mode else "#fef3c7"
     color = "#166534" if ai_mode else "#92400e"
     return f"<div class='card' style='padding:10px 12px;background:{bg};color:{color}'><b>{status}</b></div>"
-
-
-def focus_how_section(lang: str):
-    html = landing_html(lang).replace("id='how-works-section'", "id='how-works-section' class='how-focus'")
-    html += """
-<script>
-setTimeout(function(){
-  const el = document.getElementById('how-works-section');
-  if(el){ el.scrollIntoView({behavior:'smooth', block:'center'}); }
-}, 80);
-</script>
-"""
-    return html
 
 
 def ai_status_from_lang_choice(ai_mode: bool, lang_choice: str) -> str:
@@ -859,7 +1164,7 @@ def launch_app(port: int = 7860, share: bool = False):
             landing_block = gr.HTML(landing_html("en"))
             with gr.Row():
                 start_demo_btn = gr.Button(tr("en", "start_demo"), elem_classes=["btn-light-cta"])
-                how_btn = gr.Button(tr("en", "view_how"), elem_classes=["btn-secondary"], elem_id="view-how-btn")
+                how_btn = gr.Button(tr("en", "view_how"), elem_classes=["btn-secondary"])
 
         with gr.Group(visible=False, elem_classes=["fade-page"]) as dashboard_page:
             with gr.Column(elem_classes=["dash-shell"]):
@@ -868,14 +1173,15 @@ def launch_app(port: int = 7860, share: bool = False):
                     quick_chip = gr.Button("Live Demo", elem_classes=["btn-chip"])
 
                 gr.HTML(f"<div class='dash-title'>{tr('en', 'dashboard')}</div><div class='dash-sub'>Actionable market intelligence with explainable confidence.</div>")
-                gr.HTML(f"<div class='section'><h3>{tr('en', 'market_cards')}</h3></div>")
-                gr.HTML(market_html())
+                markets_ui = gr.HTML(markets_dashboard_html("en"))
 
-                gr.HTML(f"<div class='section'><h3>{tr('en', 'opportunities')}</h3></div>")
-                gr.HTML(opportunities_html())
+                gr.HTML(f"<div class='section-title' style='margin-top:8px'>{tr('en', 'opportunities')}</div>")
+                opportunities_ui = gr.HTML(opportunities_rich_html("en"))
 
-                gr.HTML(f"<div class='section'><h3>{tr('en', 'insights')}</h3></div>")
-                gr.HTML(insights_html())
+                with gr.Row():
+                    gr.HTML(f"<div class='section-title' style='margin:0;flex:1'>{tr('en', 'insights')}</div>")
+                    refresh_news_btn = gr.Button(tr("en", "refresh_news"), elem_classes=["btn-secondary"], scale=0)
+                news_ui = gr.HTML(news_carousel_html("en"))
 
                 with gr.Tabs():
                     with gr.TabItem(tr("en", "analyze")):
@@ -915,7 +1221,17 @@ def launch_app(port: int = 7860, share: bool = False):
         def noop_btn():
             return gr.update()
 
-        how_btn.click(fn=refresh_landing, inputs=[lang_state], outputs=[landing_block])
+        def refresh_news_only(lang: str):
+            return news_carousel_html(lang)
+
+        refresh_news_btn.click(refresh_news_only, inputs=[lang_state], outputs=[news_ui])
+
+        how_btn.click(
+            fn=refresh_landing,
+            inputs=[lang_state],
+            outputs=[landing_block],
+            js=HOW_SCROLL_JS,
+        )
         start_demo_btn.click(lambda: toggle_pages(True), outputs=[landing_page, dashboard_page])
         back_btn.click(lambda: toggle_pages(False), outputs=[landing_page, dashboard_page])
         quick_chip.click(noop_btn, outputs=[quick_chip])
@@ -946,8 +1262,12 @@ def launch_app(port: int = 7860, share: bool = False):
                 lang_state,
                 topbar,
                 landing_block,
+                markets_ui,
+                opportunities_ui,
+                news_ui,
                 portfolio_block,
                 reason_block,
+                insight_reason,
                 question_input,
                 start_demo_btn,
                 how_btn,
@@ -955,6 +1275,7 @@ def launch_app(port: int = 7860, share: bool = False):
                 analyze_btn,
                 ask_btn,
                 add_btn,
+                refresh_news_btn,
                 ai_mode,
             ],
         )
@@ -964,16 +1285,6 @@ def launch_app(port: int = 7860, share: bool = False):
             """
 <script>
 (function(){
-  document.addEventListener('click', function(e){
-    const btn = e.target.closest('#view-how-btn');
-    if(!btn) return;
-    const el = document.getElementById('how-works-section');
-    if(el){
-      el.classList.add('how-focus');
-      el.scrollIntoView({behavior:'smooth', block:'center'});
-      setTimeout(function(){ el.classList.remove('how-focus'); }, 1400);
-    }
-  });
   function animateCounts(){
     document.querySelectorAll('.count[data-count]').forEach(function(el){
       const target = parseInt(el.getAttribute('data-count') || '0', 10);
