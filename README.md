@@ -258,3 +258,7 @@ Unlike black-box AI tools, TradeIQ ensures:
 * transparency
 * reliability
 * user confidence
+
+## Team
+* **Muskan Sahay** - [[GitHub Profile Link]](https://github.com/muskan3107)
+
