@@ -114,7 +114,7 @@ TradeIQ/
 ## ⚙️ Setup Instructions
 
 ```bash
-git clone <https://github.com/muskan3107/TradeIQ.git>
+git clone https://github.com/muskan3107/TradeIQ.git
 cd TradeIQ/MainApp
 
 python -m venv venv
