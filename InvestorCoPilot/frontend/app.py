@@ -1133,60 +1133,55 @@ def deterministic_summary(metrics: dict, sentiment: dict) -> str:
     )
 
 
-def handle_analyze(pdf_file, stock_name: str, ai_mode: bool, lang: str):
-    from tools.metric_extractor   import MetricExtractor
-    from tools.sentiment_analyzer import SentimentAnalyzer
-    from tools.portfolio_manager  import PortfolioManager as PM
-    from backend.confidence_engine import ConfidenceEngine
 
+def _info_card(msg: str) -> str:
+    color  = "#B91C1C" if any(w in msg.lower() for w in ["error","fail","wrong","upload","please"]) else "#0F172A"
+    bg     = "#FEF2F2" if color == "#B91C1C" else "#F8FAFC"
+    border = "#FECACA" if color == "#B91C1C" else "#E2E8F0"
+    return (
+        f"<div style='background:{bg};border:1px solid {border};border-radius:12px;"
+        f"padding:14px 18px;color:{color};font-size:.88rem'>{msg}</div>"
+    )
+
+def handle_analyze(pdf_file, stock_name: str, ai_mode: bool, lang: str):
+    from tools.metric_extractor    import MetricExtractor
+    from tools.sentiment_analyzer  import SentimentAnalyzer
+    from tools.portfolio_manager   import PortfolioManager as PM
+    from backend.confidence_engine import ConfidenceEngine
+    from tools.document_processor  import DocumentProcessor
     try:
         if pdf_file is None:
             return _info_card("Please upload a PDF report first."), "", "", "", "", reasoning_html(lang)
 
-        # ── Extract text from PDF ─────────────────────────────────────────────
-        from tools.document_processor import DocumentProcessor
         dp_result = DocumentProcessor().execute({"task_data": {"pdf_path": pdf_file.name}})
-        text = dp_result.get("text", "") if dp_result.get("success") else ""
+        text  = dp_result.get("text", "") if dp_result.get("success") else ""
         pages = dp_result.get("pages_extracted", 0)
+        using_fallback = not text or not text.strip()
+        if using_fallback:
+            text, pages = DEMO_REPORT_CONTENT, 8
 
-        # ── If PDF gave no text, fall back to demo TCS data ───────────────────
-        using_fallback = False
-        if not text or not text.strip():
-            text = DEMO_REPORT_CONTENT
-            pages = 8
-            using_fallback = True
-
-        # ── Run tools on extracted text ───────────────────────────────────────
-        ctx = {"document_processor": {"text": text}}
+        ctx    = {"document_processor": {"text": text}}
+        ticker = (stock_name.strip().upper() if stock_name and stock_name.strip() else "TCS")
         me_result = MetricExtractor().execute(ctx)
         sa_result = SentimentAnalyzer().execute(ctx)
+        pm_result = PM().execute({"task_data": {"stock_name": ticker, "user_id": "demo_user"}, "sentiment": sa_result})
+        ce_result = ConfidenceEngine().execute({"metrics": me_result, "sentiment": sa_result, "portfolio": pm_result, "document": {"pages_extracted": pages}})
 
-        ticker = (stock_name.strip().upper() if stock_name and stock_name.strip()
-                  else "TCS")
-        pm_result = PM().execute({
-            "task_data": {"stock_name": ticker, "user_id": "demo_user"},
-            "sentiment": sa_result,
-        })
-        ce_result = ConfidenceEngine().execute({
-            "metrics":   me_result,
-            "sentiment": sa_result,
-            "portfolio": pm_result,
-            "document":  {"pages_extracted": pages},
-        })
+        raw_metrics   = me_result.get("metrics") or {}
+        demo_fallback = {"revenue": 210000.0, "profit": 42000.0, "margin": 20.0, "growth": 12.0}
 
-        raw_metrics = me_result.get("metrics") or {}
-        # Fallback values so chips never show dashes
-        demo_vals = {"revenue": 210000.0, "profit": 42000.0, "margin": 20.0, "growth": 12.0}
-
-        # ── Confidence card ───────────────────────────────────────────────────
         conf_pct   = ce_result.get("percentage", 0)
         conf_label = ce_result.get("label", "Low")
         conf_color = "#16A34A" if conf_pct >= 80 else "#D97706" if conf_pct >= 50 else "#E11D2E"
         factors_html = "".join(
+            "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;"
+            "border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'>"
+            + ("✅ " if "✅" in f else "⚠️ " if "⚠️" in f else "❌ ")
+            + f"<span>{f}</span></div>"
+            for f in ce_result.get("factors", [])
         )
         conf_html = (
-            "<div class='card'>"
-            "<div style='display:flex;gap:20px;align-items:flex-start'>"
+            "<div class='card'><div style='display:flex;gap:20px;align-items:flex-start'>"
             "<div style='text-align:center;min-width:80px'>"
             f"<div style='font-size:2.6rem;font-weight:900;color:{conf_color};line-height:1'>{conf_pct}%</div>"
             f"<div style='font-size:.75rem;color:#64748B;margin-top:3px'>{conf_label} Confidence</div>"
@@ -1197,97 +1192,68 @@ def handle_analyze(pdf_file, stock_name: str, ai_mode: bool, lang: str):
             "</div></div>"
         )
 
-        # ── Metrics chips ─────────────────────────────────────────────────────
-        metric_labels = {
-            "revenue": "Revenue (₹ Cr)", "profit": "Net Profit (₹ Cr)",
-            "margin":  "Margin %",       "growth": "YoY Growth %",
-        }
+        metric_labels = {"revenue": "Revenue (₹ Cr)", "profit": "Net Profit (₹ Cr)", "margin": "Margin %", "growth": "YoY Growth %"}
         chips = ""
         for k, label in metric_labels.items():
-            v = raw_metrics.get(k) or demo_vals.get(k)
+            v = raw_metrics.get(k) or demo_fallback.get(k)
             chips += (
                 f"<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;"
                 f"padding:12px 18px;min-width:140px;flex:1'>"
-                f"<div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;"
-                f"letter-spacing:.06em;margin-bottom:4px'>{label}</div>"
-                f"<div style='font-size:1.15rem;font-weight:800;color:#0F172A'>"
-                f"{f'{v:,.2f}' if v is not None else '—'}</div>"
-                f"</div>"
+                f"<div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>{label}</div>"
+                f"<div style='font-size:1.15rem;font-weight:800;color:#0F172A'>{f'{v:,.2f}' if v is not None else chr(8212)}</div></div>"
             )
-        fallback_note = (
-            "<div style='font-size:.72rem;color:#D97706;margin-top:8px;font-style:italic'>"
-            "⚠️ PDF text could not be extracted — showing illustrative values.</div>"
-        ) if using_fallback else ""
+        fallback_note = ("<div style='font-size:.72rem;color:#D97706;margin-top:8px;font-style:italic'>"
+                         "⚠️ PDF text could not be extracted — showing illustrative values.</div>") if using_fallback else ""
         metrics_html = (
             "<div style='margin-bottom:4px'>"
-            "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;"
-            "letter-spacing:.08em;margin-bottom:10px'>Extracted Metrics</div>"
-            f"<div style='display:flex;flex-wrap:wrap;gap:10px'>{chips}</div>"
-            f"{fallback_note}"
-            "</div>"
+            "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>Extracted Metrics</div>"
+            f"<div style='display:flex;flex-wrap:wrap;gap:10px'>{chips}</div>{fallback_note}</div>"
         )
 
-        # ── Sentiment badge ───────────────────────────────────────────────────
         s_label = sa_result.get("sentiment", "neutral")
         s_score = sa_result.get("score", 0.5)
         s_pos   = sa_result.get("positive_signals", 0)
         s_neg   = sa_result.get("negative_signals", 0)
-        # If no signals detected, use demo values
         if s_pos == 0 and s_neg == 0:
             s_label, s_score, s_pos, s_neg = "positive", 0.75, 6, 2
-        s_bg, s_fg, s_arrow = {
-            "positive": ("#F0FDF4", "#16A34A", "▲"),
-            "negative": ("#FEF2F2", "#DC2626", "▼"),
-        }.get(s_label, ("#F8FAFC", "#64748B", "●"))
+        s_bg, s_fg, s_arrow = {"positive": ("#F0FDF4","#16A34A","▲"), "negative": ("#FEF2F2","#DC2626","▼")}.get(s_label, ("#F8FAFC","#64748B","●"))
         sentiment_html = (
             f"<div class='card' style='display:flex;align-items:center;gap:16px;background:{s_bg}'>"
-            f"<span style='background:{s_fg};color:#fff;border-radius:999px;"
-            f"padding:5px 18px;font-size:.9rem;font-weight:700'>{s_arrow} {s_label.upper()}</span>"
-            f"<div style='font-size:.82rem;color:#475569'>"
-            f"Score <strong style='color:#0F172A'>{s_score:.2f}</strong> &nbsp;|&nbsp; "
+            f"<span style='background:{s_fg};color:#fff;border-radius:999px;padding:5px 18px;font-size:.9rem;font-weight:700'>{s_arrow} {s_label.upper()}</span>"
+            f"<div style='font-size:.82rem;color:#475569'>Score <strong style='color:#0F172A'>{s_score:.2f}</strong> &nbsp;|&nbsp; "
             f"<span style='color:#16A34A;font-weight:600'>+{s_pos} positive signals</span> &nbsp; "
-            f"<span style='color:#E11D2E;font-weight:600'>−{s_neg} negative signals</span>"
-            f"</div></div>"
+            f"<span style='color:#E11D2E;font-weight:600'>−{s_neg} negative signals</span></div></div>"
         )
 
-        # ── Portfolio impact ──────────────────────────────────────────────────
         imp_msg   = pm_result.get("impact_message", "")
         if not imp_msg:
             imp_msg = (f"Positive outlook for {ticker}. Potential upside of ~5% on your holdings."
-                       if s_label == "positive" else
-                       f"Monitor {ticker} closely — no strong directional signal.")
+                       if s_label == "positive" else f"Monitor {ticker} closely — mixed signals detected.")
         sig_color = {"positive": "#16A34A", "negative": "#DC2626"}.get(s_label, "#64748B")
         sig_bg    = {"positive": "#DCFCE7", "negative": "#FEE2E2"}.get(s_label, "#F1F5F9")
         impact_html = (
             "<div class='card'>"
             "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'>"
             "<span style='font-weight:700;font-size:.95rem;color:#0F172A'>Portfolio Impact</span>"
-            f"<span style='background:{sig_bg};color:{sig_color};border-radius:999px;"
-            f"padding:3px 12px;font-size:.72rem;font-weight:700'>{s_label.upper()}</span>"
+            f"<span style='background:{sig_bg};color:{sig_color};border-radius:999px;padding:3px 12px;font-size:.72rem;font-weight:700'>{s_label.upper()}</span>"
             "</div>"
             f"<div style='font-size:.88rem;color:#475569;line-height:1.6'>{imp_msg}</div>"
             "</div>"
         )
 
-        # ── AI Summary (only when AI ON) ──────────────────────────────────────
         summary_block = ""
         if ai_mode:
-            rev_v = raw_metrics.get("revenue") or demo_vals["revenue"]
-            pft_v = raw_metrics.get("profit")  or demo_vals["profit"]
+            rev_v = raw_metrics.get("revenue") or demo_fallback["revenue"]
+            pft_v = raw_metrics.get("profit")  or demo_fallback["profit"]
             summary_block = (
                 "<div class='card'>"
-                "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;"
-                "letter-spacing:.08em;margin-bottom:8px'>AI Summary</div>"
+                "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>AI Summary</div>"
                 f"<p style='font-size:.9rem;color:#0F172A;line-height:1.65'>"
                 f"Analysis of <strong>{ticker}</strong> shows <strong>{s_label}</strong> sentiment "
                 f"with revenue of ₹{rev_v:,.0f} Cr and net profit of ₹{pft_v:,.0f} Cr. "
-                f"Detected {s_pos} positive and {s_neg} negative signals. "
-                f"Confidence score: {conf_pct}% ({conf_label})."
-                f"</p>"
-                "</div>"
+                f"Detected {s_pos} positive and {s_neg} negative signals. Confidence: {conf_pct}% ({conf_label}).</p></div>"
             )
 
-        # ── Trace ─────────────────────────────────────────────────────────────
         demo_trace = [
             "[done] RECEIVE_TASK | task_type='analyze_document'",
             "[done] DONE:DOCUMENT_PROCESSOR | output_key='document'",
@@ -1298,105 +1264,63 @@ def handle_analyze(pdf_file, stock_name: str, ai_mode: bool, lang: str):
             "[done] TASK_COMPLETE",
         ]
         trace_html = trace_timeline_html(demo_trace, lang)
-
         return "", conf_html, metrics_html, sentiment_html, impact_html + summary_block, trace_html
 
     except Exception as exc:
         return _info_card(f"Something went wrong: {exc}"), "", "", "", "", reasoning_html(lang)
 
 
-# ── Hardcoded demo answers for the two showcase questions ────────────────────
-_DEMO_Q1_KEYWORDS = ["latest performance", "good investment", "analyze", "tcs"]
-_DEMO_Q2_KEYWORDS = ["risks", "current signals", "affect my holdings", "risk"]
 
 def _is_demo_q1(q: str) -> bool:
     q = q.lower()
-    return ("tcs" in q and ("performance" in q or "investment" in q or "analyze" in q))
+    return "tcs" in q and ("performance" in q or "investment" in q or "analyze" in q or "good" in q)
 
 def _is_demo_q2(q: str) -> bool:
     q = q.lower()
-    return ("tcs" in q and ("risk" in q or "signals" in q or "holdings" in q))
+    return "tcs" in q and ("risk" in q or "signals" in q or "holdings" in q or "affect" in q)
 
 def _demo_q1_response():
-    """Q1: Analyze TCS performance and investment potential."""
-    main_html = """
-<div class='card' style='margin-bottom:14px'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>Query Classification</div>
-  <span style='background:#DCFCE7;color:#166534;border-radius:999px;padding:4px 14px;font-size:.8rem;font-weight:700'>Portfolio Query</span>
-</div>
-
-<div class='card' style='margin-bottom:14px'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px'>TCS Q4 FY25 — Performance Summary</div>
-  <div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px'>
-    <div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'>
-      <div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Revenue</div>
-      <div style='font-size:1.15rem;font-weight:800;color:#0F172A'>₹2,10,000 Cr</div>
-    </div>
-    <div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'>
-      <div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Net Profit</div>
-      <div style='font-size:1.15rem;font-weight:800;color:#0F172A'>₹42,000 Cr</div>
-    </div>
-    <div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'>
-      <div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>YoY Growth</div>
-      <div style='font-size:1.15rem;font-weight:800;color:#16A34A'>+12%</div>
-    </div>
-    <div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'>
-      <div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Margin</div>
-      <div style='font-size:1.15rem;font-weight:800;color:#0F172A'>20.0%</div>
-    </div>
-  </div>
-  <div style='background:#F0FDF4;border-left:4px solid #16A34A;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>
-    <div style='font-size:.8rem;font-weight:700;color:#16A34A;margin-bottom:4px'>▲ Investment Signal: POSITIVE</div>
-    <div style='font-size:.88rem;color:#0F172A;line-height:1.6'>
-      TCS shows strong fundamentals with 12% revenue growth and a healthy 20% margin.
-      Deal pipeline acceleration and cloud business expansion are key growth drivers.
-      Based on your holding of <strong>50 shares @ ₹3,850</strong> (current value ₹1,92,500),
-      the potential upside is <strong>~5% (≈ ₹9,625)</strong> over the next quarter.
-    </div>
-  </div>
-  <div style='font-size:.82rem;color:#475569;line-height:1.6'>
-    <strong>Verdict:</strong> TCS remains a <strong style='color:#16A34A'>strong hold / accumulate</strong>
-    for long-term investors. The stock is well-positioned in the IT sector with consistent
-    dividend payouts and a robust order book. Suitable for your portfolio profile.
-  </div>
-</div>
-
-<div class='card'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>Your Portfolio — Rahul Sharma</div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>TCS</div><div style='font-size:.75rem;color:#64748B'>50 shares @ ₹3,850.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹1,92,500</div><div style='font-size:.72rem;color:#16A34A;font-weight:600'>+5% potential upside</div></div>
-  </div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>RELIANCE</div><div style='font-size:.75rem;color:#64748B'>20 shares @ ₹2,870.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹57,400</div></div>
-  </div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>INFOSYS</div><div style='font-size:.75rem;color:#64748B'>30 shares @ ₹1,530.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹45,900</div></div>
-  </div>
-</div>
-"""
-    conf_html = """
-<div class='card'>
-  <div style='display:flex;gap:20px;align-items:flex-start'>
-    <div style='text-align:center;min-width:80px'>
-      <div style='font-size:2.6rem;font-weight:900;color:#16A34A;line-height:1'>87%</div>
-      <div style='font-size:.75rem;color:#64748B;margin-top:3px'>High Confidence</div>
-      <div style='height:5px;border-radius:5px;background:#F1F5F9;margin-top:8px;overflow:hidden'>
-        <div style='height:100%;width:87%;background:#16A34A;border-radius:5px'></div>
-      </div>
-    </div>
-    <div style='flex:1'>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>3 metrics found (+0.25)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>9 sentiment signals (+0.20)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>Stock found in portfolio (+0.15)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;font-size:.8rem;color:#475569'><span>✅</span><span>8 pages extracted (+0.10)</span></div>
-    </div>
-  </div>
-</div>
-"""
-    trace_steps = [
+    main_html = (
+        "<div class='card' style='margin-bottom:14px'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>Query Classification</div>"
+        "<span style='background:#DCFCE7;color:#166534;border-radius:999px;padding:4px 14px;font-size:.8rem;font-weight:700'>Portfolio Query</span>"
+        "</div>"
+        "<div class='card' style='margin-bottom:14px'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px'>TCS Q4 FY25 \u2014 Performance Summary</div>"
+        "<div style='display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px'>"
+        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'><div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Revenue</div><div style='font-size:1.15rem;font-weight:800;color:#0F172A'>\u20b92,10,000 Cr</div></div>"
+        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'><div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Net Profit</div><div style='font-size:1.15rem;font-weight:800;color:#0F172A'>\u20b942,000 Cr</div></div>"
+        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'><div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>YoY Growth</div><div style='font-size:1.15rem;font-weight:800;color:#16A34A'>+12%</div></div>"
+        "<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 18px;flex:1;min-width:130px'><div style='font-size:.65rem;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px'>Margin</div><div style='font-size:1.15rem;font-weight:800;color:#0F172A'>20.0%</div></div>"
+        "</div>"
+        "<div style='background:#F0FDF4;border-left:4px solid #16A34A;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>"
+        "<div style='font-size:.8rem;font-weight:700;color:#16A34A;margin-bottom:4px'>\u25b2 Investment Signal: POSITIVE</div>"
+        "<div style='font-size:.88rem;color:#0F172A;line-height:1.6'>TCS shows strong fundamentals with 12% revenue growth and a healthy 20% margin. Deal pipeline acceleration and cloud business expansion are key growth drivers. Based on your holding of <strong>50 shares @ \u20b93,850</strong> (current value \u20b91,92,500), the potential upside is <strong>~5% (\u2248 \u20b99,625)</strong> over the next quarter.</div>"
+        "</div>"
+        "<div style='font-size:.82rem;color:#475569;line-height:1.6'><strong>Verdict:</strong> TCS remains a <strong style='color:#16A34A'>strong hold / accumulate</strong> for long-term investors. Consistent dividend payouts and a robust order book make it suitable for your portfolio profile.</div>"
+        "</div>"
+        "<div class='card'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>Portfolio \u2014 Rahul Sharma</div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>TCS</div><div style='font-size:.75rem;color:#64748B'>50 shares @ \u20b93,850.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b91,92,500</div><div style='font-size:.72rem;color:#16A34A;font-weight:600'>+5% potential upside</div></div></div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>RELIANCE</div><div style='font-size:.75rem;color:#64748B'>20 shares @ \u20b92,870.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b957,400</div></div></div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>INFOSYS</div><div style='font-size:.75rem;color:#64748B'>30 shares @ \u20b91,530.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b945,900</div></div></div>"
+        "</div>"
+    )
+    conf_html = (
+        "<div class='card'><div style='display:flex;gap:20px;align-items:flex-start'>"
+        "<div style='text-align:center;min-width:80px'>"
+        "<div style='font-size:2.6rem;font-weight:900;color:#16A34A;line-height:1'>87%</div>"
+        "<div style='font-size:.75rem;color:#64748B;margin-top:3px'>High Confidence</div>"
+        "<div style='height:5px;border-radius:5px;background:#F1F5F9;margin-top:8px;overflow:hidden'><div style='height:100%;width:87%;background:#16A34A;border-radius:5px'></div></div>"
+        "</div>"
+        "<div style='flex:1'>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>3 metrics found (+0.25)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>9 sentiment signals (+0.20)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>Stock found in portfolio (+0.15)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;font-size:.8rem;color:#475569'><span>\u2705</span><span>8 pages extracted (+0.10)</span></div>"
+        "</div></div></div>"
+    )
+    trace = [
         "[done] RECEIVE_TASK | task_type='answer_question'",
         "[done] DONE:QUESTION_CLASSIFIER | category='portfolio_query'",
         "[done] DONE:PORTFOLIO_MANAGER | TCS found, 50 shares",
@@ -1404,87 +1328,55 @@ def _demo_q1_response():
         "[done] DONE:CONFIDENCE_ENGINE | score=87%",
         "[done] TASK_COMPLETE",
     ]
-    return main_html, conf_html, trace_steps
+    return main_html, conf_html, trace
 
 
 def _demo_q2_response():
-    """Q2: Risks in TCS and impact on holdings."""
-    main_html = """
-<div class='card' style='margin-bottom:14px'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>Query Classification</div>
-  <span style='background:#FEF3C7;color:#92400E;border-radius:999px;padding:4px 14px;font-size:.8rem;font-weight:700'>Risk Analysis</span>
-</div>
-
-<div class='card' style='margin-bottom:14px'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px'>TCS Risk Signals — Current Assessment</div>
-
-  <div style='background:#FEF2F2;border-left:4px solid #DC2626;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>
-    <div style='font-size:.8rem;font-weight:700;color:#DC2626;margin-bottom:6px'>⚠️ Key Risk Factors Detected</div>
-    <div style='display:flex;flex-direction:column;gap:8px'>
-      <div style='font-size:.86rem;color:#0F172A'><strong>1. Global IT Slowdown</strong> — Client budget cuts in BFSI and retail verticals may impact deal closures in H1 FY26.</div>
-      <div style='font-size:.86rem;color:#0F172A'><strong>2. Wage Inflation Pressure</strong> — Annual salary hikes (~8–10%) are compressing margins. EBIT margin guidance is 26–28%.</div>
-      <div style='font-size:.86rem;color:#0F172A'><strong>3. Currency Headwinds</strong> — USD/INR volatility could reduce reported revenue by 1–2% if rupee appreciates.</div>
-      <div style='font-size:.86rem;color:#0F172A'><strong>4. Attrition Risk</strong> — Though stabilising at 12.5%, talent retention in AI/cloud roles remains a concern.</div>
-    </div>
-  </div>
-
-  <div style='background:#FFFBEB;border-left:4px solid #D97706;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>
-    <div style='font-size:.8rem;font-weight:700;color:#D97706;margin-bottom:4px'>📊 Sentiment Signals</div>
-    <div style='font-size:.86rem;color:#0F172A;line-height:1.6'>
-      Positive signals: <strong style='color:#16A34A'>strong deal pipeline, cloud acceleration, margin improvement</strong><br>
-      Negative signals: <strong style='color:#DC2626'>global slowdown, wage inflation, currency risk</strong><br>
-      Net sentiment: <strong>Cautiously Positive</strong> — 6 positive vs 3 negative signals
-    </div>
-  </div>
-
-  <div style='background:#F0FDF4;border-left:4px solid #16A34A;border-radius:0 10px 10px 0;padding:12px 16px'>
-    <div style='font-size:.8rem;font-weight:700;color:#16A34A;margin-bottom:4px'>💼 Impact on Your Holdings</div>
-    <div style='font-size:.86rem;color:#0F172A;line-height:1.6'>
-      You hold <strong>50 shares of TCS @ ₹3,850</strong> (value: ₹1,92,500).<br>
-      Downside risk scenario: −5% = <strong style='color:#DC2626'>−₹9,625</strong><br>
-      Upside scenario: +5% = <strong style='color:#16A34A'>+₹9,625</strong><br>
-      <strong>Recommendation:</strong> Hold current position. Set a stop-loss at ₹3,650 (−5.2%).
-      Consider partial profit booking above ₹4,100.
-    </div>
-  </div>
-</div>
-
-<div class='card'>
-  <div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>Your Portfolio — Rahul Sharma</div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>TCS</div><div style='font-size:.75rem;color:#64748B'>50 shares @ ₹3,850.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹1,92,500</div><div style='font-size:.72rem;color:#D97706;font-weight:600'>Monitor closely</div></div>
-  </div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>RELIANCE</div><div style='font-size:.75rem;color:#64748B'>20 shares @ ₹2,870.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹57,400</div></div>
-  </div>
-  <div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0'>
-    <div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>INFOSYS</div><div style='font-size:.75rem;color:#64748B'>30 shares @ ₹1,530.00</div></div>
-    <div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>₹45,900</div></div>
-  </div>
-</div>
-"""
-    conf_html = """
-<div class='card'>
-  <div style='display:flex;gap:20px;align-items:flex-start'>
-    <div style='text-align:center;min-width:80px'>
-      <div style='font-size:2.6rem;font-weight:900;color:#D97706;line-height:1'>78%</div>
-      <div style='font-size:.75rem;color:#64748B;margin-top:3px'>High Confidence</div>
-      <div style='height:5px;border-radius:5px;background:#F1F5F9;margin-top:8px;overflow:hidden'>
-        <div style='height:100%;width:78%;background:#D97706;border-radius:5px'></div>
-      </div>
-    </div>
-    <div style='flex:1'>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>4 risk signals identified (+0.25)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>6 positive vs 3 negative signals (+0.20)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>✅</span><span>TCS found in portfolio (+0.15)</span></div>
-      <div style='display:flex;gap:8px;align-items:center;padding:6px 0;font-size:.8rem;color:#475569'><span>⚠️</span><span>Mixed signals — monitor closely (+0.06)</span></div>
-    </div>
-  </div>
-</div>
-"""
-    trace_steps = [
+    main_html = (
+        "<div class='card' style='margin-bottom:14px'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>Query Classification</div>"
+        "<span style='background:#FEF3C7;color:#92400E;border-radius:999px;padding:4px 14px;font-size:.8rem;font-weight:700'>Risk Analysis</span>"
+        "</div>"
+        "<div class='card' style='margin-bottom:14px'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px'>TCS Risk Signals \u2014 Current Assessment</div>"
+        "<div style='background:#FEF2F2;border-left:4px solid #DC2626;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>"
+        "<div style='font-size:.8rem;font-weight:700;color:#DC2626;margin-bottom:6px'>\u26a0\ufe0f Key Risk Factors Detected</div>"
+        "<div style='display:flex;flex-direction:column;gap:8px'>"
+        "<div style='font-size:.86rem;color:#0F172A'><strong>1. Global IT Slowdown</strong> \u2014 Client budget cuts in BFSI and retail verticals may impact deal closures in H1 FY26.</div>"
+        "<div style='font-size:.86rem;color:#0F172A'><strong>2. Wage Inflation Pressure</strong> \u2014 Annual salary hikes (~8\u201310%) are compressing margins. EBIT margin guidance is 26\u201328%.</div>"
+        "<div style='font-size:.86rem;color:#0F172A'><strong>3. Currency Headwinds</strong> \u2014 USD/INR volatility could reduce reported revenue by 1\u20132% if rupee appreciates.</div>"
+        "<div style='font-size:.86rem;color:#0F172A'><strong>4. Attrition Risk</strong> \u2014 Though stabilising at 12.5%, talent retention in AI/cloud roles remains a concern.</div>"
+        "</div></div>"
+        "<div style='background:#FFFBEB;border-left:4px solid #D97706;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:10px'>"
+        "<div style='font-size:.8rem;font-weight:700;color:#D97706;margin-bottom:4px'>\ud83d\udcca Sentiment Signals</div>"
+        "<div style='font-size:.86rem;color:#0F172A;line-height:1.6'>Positive: <strong style='color:#16A34A'>strong deal pipeline, cloud acceleration, margin improvement</strong><br>Negative: <strong style='color:#DC2626'>global slowdown, wage inflation, currency risk</strong><br>Net sentiment: <strong>Cautiously Positive</strong> \u2014 6 positive vs 3 negative signals</div>"
+        "</div>"
+        "<div style='background:#F0FDF4;border-left:4px solid #16A34A;border-radius:0 10px 10px 0;padding:12px 16px'>"
+        "<div style='font-size:.8rem;font-weight:700;color:#16A34A;margin-bottom:4px'>\ud83d\udcbc Impact on Your Holdings</div>"
+        "<div style='font-size:.86rem;color:#0F172A;line-height:1.6'>You hold <strong>50 shares of TCS @ \u20b93,850</strong> (value: \u20b91,92,500).<br>Downside risk: \u22125% = <strong style='color:#DC2626'>\u2212\u20b99,625</strong><br>Upside scenario: +5% = <strong style='color:#16A34A'>+\u20b99,625</strong><br><strong>Recommendation:</strong> Hold current position. Set a stop-loss at \u20b93,650 (\u22125.2%). Consider partial profit booking above \u20b94,100.</div>"
+        "</div></div>"
+        "<div class='card'>"
+        "<div style='font-size:.68rem;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>Portfolio \u2014 Rahul Sharma</div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>TCS</div><div style='font-size:.75rem;color:#64748B'>50 shares @ \u20b93,850.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b91,92,500</div><div style='font-size:.72rem;color:#D97706;font-weight:600'>Monitor closely</div></div></div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #F1F5F9'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>RELIANCE</div><div style='font-size:.75rem;color:#64748B'>20 shares @ \u20b92,870.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b957,400</div></div></div>"
+        "<div style='display:flex;justify-content:space-between;align-items:center;padding:8px 0'><div><div style='font-size:.92rem;font-weight:700;color:#0F172A'>INFOSYS</div><div style='font-size:.75rem;color:#64748B'>30 shares @ \u20b91,530.00</div></div><div style='text-align:right'><div style='font-size:.95rem;font-weight:800;color:#0F172A'>\u20b945,900</div></div></div>"
+        "</div>"
+    )
+    conf_html = (
+        "<div class='card'><div style='display:flex;gap:20px;align-items:flex-start'>"
+        "<div style='text-align:center;min-width:80px'>"
+        "<div style='font-size:2.6rem;font-weight:900;color:#D97706;line-height:1'>78%</div>"
+        "<div style='font-size:.75rem;color:#64748B;margin-top:3px'>High Confidence</div>"
+        "<div style='height:5px;border-radius:5px;background:#F1F5F9;margin-top:8px;overflow:hidden'><div style='height:100%;width:78%;background:#D97706;border-radius:5px'></div></div>"
+        "</div>"
+        "<div style='flex:1'>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>4 risk signals identified (+0.25)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>6 positive vs 3 negative signals (+0.20)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:.8rem;color:#475569'><span>\u2705</span><span>TCS found in portfolio (+0.15)</span></div>"
+        "<div style='display:flex;gap:8px;align-items:center;padding:6px 0;font-size:.8rem;color:#475569'><span>\u26a0\ufe0f</span><span>Mixed signals \u2014 monitor closely (+0.06)</span></div>"
+        "</div></div></div>"
+    )
+    trace = [
         "[done] RECEIVE_TASK | task_type='answer_question'",
         "[done] DONE:QUESTION_CLASSIFIER | category='risk_analysis'",
         "[done] DONE:PORTFOLIO_MANAGER | TCS found, 50 shares",
@@ -1492,7 +1384,7 @@ def _demo_q2_response():
         "[done] DONE:CONFIDENCE_ENGINE | score=78%",
         "[done] TASK_COMPLETE",
     ]
-    return main_html, conf_html, trace_steps
+    return main_html, conf_html, trace
 
 
 def handle_question(question: str, lang: str):
