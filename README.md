@@ -27,7 +27,7 @@ TradeIQ combines **deterministic systems + agentic AI reasoning** to build a rel
 * Explains every decision with a **step-by-step reasoning trace**
 * Assigns a **confidence score (0–100%)** to reduce blind trust
 * Works even without AI (fully deterministic fallback mode)
-* Supports **vernacular accessibility (Hindi demo support)**
+* Supports **vernacular accessibility (Hindi language support)**
 * Minimizes AI usage for **efficiency and sustainability**
 
 ---
